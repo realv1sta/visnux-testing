@@ -569,7 +569,7 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr pipewire pipewire-pulse wire-plumber os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" >> "$LOGFILE" 2>&1 || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr pipewire pipewire-pulse wireplumber os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" >> "$LOGFILE" 2>&1 || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf

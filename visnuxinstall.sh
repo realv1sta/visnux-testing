@@ -569,7 +569,7 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr pipewire-openrc pipewire-pulse-openrc wireplumber-openrc os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" >> "$LOGFILE" 2>&1 || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr pipewire pipewire-pulse wire-plumber os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" >> "$LOGFILE" 2>&1 || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -736,6 +736,10 @@ enable_openrc_service() {
         echo "WARNING: no OpenRC service matching '$pattern' found under /etc/init.d - skipped" >&2
     fi
 }
+
+su - $USER_ -c "rc-update --user add pipewire default"
+su - $USER_ -c "rc-update --user add pipewire-pulse default"
+su - $USER_ -c "rc-update --user add wireplumber default"   
 
 for svc in dbus elogind NetworkManager turnstile sddm power-profiles-daemon; do
     enable_openrc_service "$svc"

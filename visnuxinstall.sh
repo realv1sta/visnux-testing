@@ -696,20 +696,39 @@ sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub |
 sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
 
+mkdir -p /usr/local/bin /etc/xdg/autostart
+
+cat <<'AUDIOEOF' > /usr/local/bin/visnux-audio-start
+#!/bin/sh
+[ -n "\$XDG_RUNTIME_DIR" ] || exit 0
+pgrep -u "\$(id -u)" -x pipewire >/dev/null 2>&1 || pipewire >/dev/null 2>&1 &
+sleep 1
+pgrep -u "\$(id -u)" -x wireplumber >/dev/null 2>&1 || wireplumber >/dev/null 2>&1 &
+sleep 1
+pgrep -u "\$(id -u)" -x pipewire-pulse >/dev/null 2>&1 || pipewire-pulse >/dev/null 2>&1 &
+AUDIOEOF
+chmod +x /usr/local/bin/visnux-audio-start
+
+cat <<'AUDIODESKEOF' > /etc/xdg/autostart/visnux-audio.desktop
+[Desktop Entry]
+Type=Application
+Name=Visnux Audio
+Comment=Starts PipeWire, WirePlumber and PipeWire-Pulse
+Exec=/usr/local/bin/visnux-audio-start
+Terminal=false
+NoDisplay=true
+AUDIODESKEOF
+
 DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
     DE_PKGS="plasma konsole dolphin"
-    DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc"
+    DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc pipewire-alsa alsa-utils"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
-    DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc"
+    DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc pipewire-alsa alsa-utils pavucontrol"
 fi
-
-rc-update --user add pipewire default
-rc-update --user add pipewire-pulse default
-rc-update --user add wireplumber default   
 
 pacman -S \
     \$DE_PKGS \
@@ -736,10 +755,6 @@ enable_openrc_service() {
         echo "WARNING: no OpenRC service matching '$pattern' found under /etc/init.d - skipped" >&2
     fi
 }
-
-su - $USER_ -c "rc-update --user add pipewire default"
-su - $USER_ -c "rc-update --user add pipewire-pulse default"
-su - $USER_ -c "rc-update --user add wireplumber default"   
 
 for svc in dbus elogind NetworkManager turnstile sddm power-profiles-daemon; do
     enable_openrc_service "$svc"
@@ -919,15 +934,38 @@ sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub |
 sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
 
+mkdir -p /usr/local/bin /etc/xdg/autostart
+
+cat <<'AUDIOEOF' > /usr/local/bin/visnux-audio-start
+#!/bin/sh
+[ -n "\$XDG_RUNTIME_DIR" ] || exit 0
+pgrep -u "\$(id -u)" -x pipewire >/dev/null 2>&1 || pipewire >/dev/null 2>&1 &
+sleep 1
+pgrep -u "\$(id -u)" -x wireplumber >/dev/null 2>&1 || wireplumber >/dev/null 2>&1 &
+sleep 1
+pgrep -u "\$(id -u)" -x pipewire-pulse >/dev/null 2>&1 || pipewire-pulse >/dev/null 2>&1 &
+AUDIOEOF
+chmod +x /usr/local/bin/visnux-audio-start
+
+cat <<'AUDIODESKEOF' > /etc/xdg/autostart/visnux-audio.desktop
+[Desktop Entry]
+Type=Application
+Name=Visnux Audio
+Comment=Starts PipeWire, WirePlumber and PipeWire-Pulse
+Exec=/usr/local/bin/visnux-audio-start
+Terminal=false
+NoDisplay=true
+AUDIODESKEOF
+
 DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
     DE_PKGS="plasma konsole dolphin"
-    DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber"
+    DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
-    DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber"
+    DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils pavucontrol"
 fi
 
 pacman -S \
@@ -1138,15 +1176,38 @@ sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub |
 sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
 
+mkdir -p /usr/local/bin /etc/xdg/autostart
+
+cat <<'AUDIOEOF' > /usr/local/bin/visnux-audio-start
+#!/bin/sh
+[ -n "\$XDG_RUNTIME_DIR" ] || exit 0
+pgrep -u "\$(id -u)" -x pipewire >/dev/null 2>&1 || pipewire >/dev/null 2>&1 &
+sleep 1
+pgrep -u "\$(id -u)" -x wireplumber >/dev/null 2>&1 || wireplumber >/dev/null 2>&1 &
+sleep 1
+pgrep -u "\$(id -u)" -x pipewire-pulse >/dev/null 2>&1 || pipewire-pulse >/dev/null 2>&1 &
+AUDIOEOF
+chmod +x /usr/local/bin/visnux-audio-start
+
+cat <<'AUDIODESKEOF' > /etc/xdg/autostart/visnux-audio.desktop
+[Desktop Entry]
+Type=Application
+Name=Visnux Audio
+Comment=Starts PipeWire, WirePlumber and PipeWire-Pulse
+Exec=/usr/local/bin/visnux-audio-start
+Terminal=false
+NoDisplay=true
+AUDIODESKEOF
+
 DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
     DE_PKGS="plasma konsole dolphin"
-    DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber"
+    DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
-    DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber"
+    DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils pavucontrol"
 fi
 
 pacman -S \

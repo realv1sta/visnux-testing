@@ -569,7 +569,7 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" >> "$LOGFILE" 2>&1 || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber alsa-utils sof-firmware os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" >> "$LOGFILE" 2>&1 || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -706,6 +706,9 @@ elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc"
 fi
+
+rc-update add pipewire default --user
+rc-update add wireplumber default --user   
 
 pacman -S \
     \$DE_PKGS \

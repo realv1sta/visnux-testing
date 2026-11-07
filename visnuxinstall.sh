@@ -368,9 +368,9 @@ while true; do
     if [ "$MENU" == "8" ]; then
         CHOICE=$(dialog --title "GPU Drivers" --menu "Choose your GPU driver setup:" 15 70 6 \
             1 "Auto-detect (recommended)" \
-            2 "AMD (Mesa + Vulkan)" \
-            3 "Intel (Mesa + Vulkan + VA-API)" \
-            4 "NVIDIA GTX 16xx / RTX or newer (nvidia-open)" \
+            2 "AMD Drivers" \
+            3 "Intel Drivers" \
+            4 "NVIDIA GTX/RTX or newer (nvidia-open)" \
             5 "NVIDIA older cards (open-source Nouveau)" \
             6 "Skip / VM (Mesa only)" 3>&1 1>&2 2>&3 3>&-); clear
 

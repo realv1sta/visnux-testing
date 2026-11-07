@@ -23,6 +23,10 @@ check_mount() {
 }
 
 show_error_log() {
+    grep -n -iE 'error|failed|fatal|not found|conflict|no space' "$LOGFILE" | tail -60 > /tmp/visnux_errors.log
+    if [ -s /tmp/visnux_errors.log ]; then
+        dialog --title "Installation Failed - Key Errors" --textbox /tmp/visnux_errors.log 20 75; clear
+    fi
     dialog --title "Installation Failed - Error Log" --textbox "$LOGFILE" 20 75; clear
 }
 
@@ -813,11 +817,22 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 $(bootloader_chroot_script)
 
+DE_PKGS=""
 if [ "$DE" == "1" ]; then
-    pacman -S plasma konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon --overwrite="*" --noconfirm
+    DE_PKGS="plasma konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
 elif [ "$DE" == "2" ]; then
-    pacman -S xorg-server xfce4 xfce4-whiskermenu-plugin xclip maim xfce4-pulseaudio-plugin kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon --overwrite="*" --noconfirm
+    DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xclip maim xfce4-pulseaudio-plugin kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
 fi
+
+for attempt in 1 2 3; do
+    pacman -S \$DE_PKGS --overwrite="*" --noconfirm && break
+    echo "WARNING: desktop package install failed (attempt \$attempt of 3)." >&2
+    if [ "\$attempt" -eq 3 ]; then
+        echo "FATAL: desktop packages failed to install after 3 attempts - see the pacman errors above." >&2
+        exit 1
+    fi
+    sleep 5
+done
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1005,14 +1020,22 @@ elif [ "$DE" == "2" ]; then
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc pipewire-alsa alsa-utils alsa-utils-openrc pavucontrol"
 fi
 
-pacman -S \
-    \$DE_PKGS \
-    \$DESKTOP_PKGS \
-    turnstile turnstile-openrc \
-    networkmanager networkmanager-openrc \
-    dbus dbus-openrc \
-    nano sudo \
-    --overwrite="*" --noconfirm
+for attempt in 1 2 3; do
+    pacman -S \
+        \$DE_PKGS \
+        \$DESKTOP_PKGS \
+        turnstile turnstile-openrc \
+        networkmanager networkmanager-openrc \
+        dbus dbus-openrc \
+        nano sudo \
+        --overwrite="*" --noconfirm && break
+    echo "WARNING: desktop package install failed (attempt \$attempt of 3)." >&2
+    if [ "\$attempt" -eq 3 ]; then
+        echo "FATAL: desktop packages failed to install after 3 attempts - see the pacman errors above." >&2
+        exit 1
+    fi
+    sleep 5
+done
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1224,13 +1247,21 @@ elif [ "$DE" == "2" ]; then
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-runit pavucontrol"
 fi
 
-pacman -S \
-    \$DE_PKGS \
-    \$DESKTOP_PKGS \
-    networkmanager networkmanager-runit \
-    dbus dbus-runit \
-    nano sudo \
-    --overwrite="*" --noconfirm
+for attempt in 1 2 3; do
+    pacman -S \
+        \$DE_PKGS \
+        \$DESKTOP_PKGS \
+        networkmanager networkmanager-runit \
+        dbus dbus-runit \
+        nano sudo \
+        --overwrite="*" --noconfirm && break
+    echo "WARNING: desktop package install failed (attempt \$attempt of 3)." >&2
+    if [ "\$attempt" -eq 3 ]; then
+        echo "FATAL: desktop packages failed to install after 3 attempts - see the pacman errors above." >&2
+        exit 1
+    fi
+    sleep 5
+done
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1447,13 +1478,21 @@ elif [ "$DE" == "2" ]; then
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-dinit pavucontrol"
 fi
 
-pacman -S \
-    \$DE_PKGS \
-    \$DESKTOP_PKGS \
-    networkmanager networkmanager-dinit \
-    dbus dbus-dinit \
-    nano sudo \
-    --overwrite="*" --noconfirm
+for attempt in 1 2 3; do
+    pacman -S \
+        \$DE_PKGS \
+        \$DESKTOP_PKGS \
+        networkmanager networkmanager-dinit \
+        dbus dbus-dinit \
+        nano sudo \
+        --overwrite="*" --noconfirm && break
+    echo "WARNING: desktop package install failed (attempt \$attempt of 3)." >&2
+    if [ "\$attempt" -eq 3 ]; then
+        echo "FATAL: desktop packages failed to install after 3 attempts - see the pacman errors above." >&2
+        exit 1
+    fi
+    sleep 5
+done
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2

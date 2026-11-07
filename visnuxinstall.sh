@@ -158,7 +158,9 @@ refresh_mirrors() {
         [ -f /etc/pacman.d/mirrorlist.backup ] && cp /etc/pacman.d/mirrorlist.backup /etc/pacman.d/mirrorlist
     fi
 
-    pacman -Syy --noconfirm archlinux-keyring artix-keyring >> "$LOGFILE" 2>&1 || true
+    pacman -Syy --noconfirm >> "$LOGFILE" 2>&1 || true
+    pacman -S --noconfirm --needed archlinux-keyring >> "$LOGFILE" 2>&1 || true
+    pacman -S --noconfirm --needed artix-keyring >> "$LOGFILE" 2>&1 || true
 }
 
 detect_gpus() {
@@ -825,7 +827,7 @@ elif [ "$DE" == "2" ]; then
 fi
 
 for attempt in 1 2 3; do
-    pacman -S \$DE_PKGS --overwrite="*" --noconfirm && break
+    pacman -Syu \$DE_PKGS --overwrite="*" --noconfirm && break
     echo "WARNING: desktop package install failed (attempt \$attempt of 3)." >&2
     if [ "\$attempt" -eq 3 ]; then
         echo "FATAL: desktop packages failed to install after 3 attempts - see the pacman errors above." >&2
@@ -1021,7 +1023,7 @@ elif [ "$DE" == "2" ]; then
 fi
 
 for attempt in 1 2 3; do
-    pacman -S \
+    pacman -Syu \
         \$DE_PKGS \
         \$DESKTOP_PKGS \
         turnstile turnstile-openrc \
@@ -1248,7 +1250,7 @@ elif [ "$DE" == "2" ]; then
 fi
 
 for attempt in 1 2 3; do
-    pacman -S \
+    pacman -Syu \
         \$DE_PKGS \
         \$DESKTOP_PKGS \
         networkmanager networkmanager-runit \
@@ -1479,7 +1481,7 @@ elif [ "$DE" == "2" ]; then
 fi
 
 for attempt in 1 2 3; do
-    pacman -S \
+    pacman -Syu \
         \$DE_PKGS \
         \$DESKTOP_PKGS \
         networkmanager networkmanager-dinit \

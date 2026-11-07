@@ -14,6 +14,8 @@ BOOTMODE_CHOICE=""
 GPU_CHOICE=""
 GPU_PKGS=""
 GPU_LABEL=""
+BOOTLOADER="grub"
+BL_PKGS=""
 LOGFILE="/tmp/visnux_install.log"
 
 check_mount() {
@@ -226,6 +228,166 @@ resolve_gpu_packages() {
     GPU_PKGS=${GPU_PKGS% }
 }
 
+bootloader_chroot_script() {
+    case "$BOOTLOADER" in
+        systemd-boot)
+            cat <<BLEOF
+if [ "$UEFI_NVRAM_OK" = "true" ]; then
+    bootctl --esp-path="$EFI_DIR" install
+else
+    bootctl --esp-path="$EFI_DIR" --no-variables install
+fi
+if [ \$? -ne 0 ]; then
+    echo "FATAL: bootctl install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
+    exit 1
+fi
+
+mkdir -p "$EFI_DIR/loader/entries"
+
+cat <<'SDLOADER' > "$EFI_DIR/loader/loader.conf"
+default visnux.conf
+timeout 5
+console-mode max
+editor no
+SDLOADER
+
+cat <<'SDENTRY' > "$EFI_DIR/loader/entries/visnux.conf"
+title   Visnux Linux
+linux   /vmlinuz-linux
+initrd  /initramfs-linux.img
+options root=UUID=$ROOT_UUID rw
+SDENTRY
+
+cat <<'SDFALLBACK' > "$EFI_DIR/loader/entries/visnux-fallback.conf"
+title   Visnux Linux (fallback initramfs)
+linux   /vmlinuz-linux
+initrd  /initramfs-linux-fallback.img
+options root=UUID=$ROOT_UUID rw
+SDFALLBACK
+
+systemctl enable systemd-boot-update.service || true
+BLEOF
+            ;;
+        limine)
+            cat <<BLEOF
+mkdir -p "$EFI_DIR/EFI/limine" "$EFI_DIR/EFI/BOOT"
+cp -f /usr/share/limine/BOOTX64.EFI "$EFI_DIR/EFI/limine/BOOTX64.EFI"
+if [ \$? -ne 0 ]; then
+    echo "FATAL: could not copy the Limine EFI binary. Check that the limine package installed correctly." >&2
+    exit 1
+fi
+
+cat <<'LIMINECONF' > "$EFI_DIR/EFI/limine/limine.conf"
+timeout: 5
+
+/Visnux Linux
+    protocol: linux
+    path: boot():/vmlinuz-linux
+    cmdline: root=UUID=$ROOT_UUID rw
+    module_path: boot():/initramfs-linux.img
+
+/Visnux Linux (fallback initramfs)
+    protocol: linux
+    path: boot():/vmlinuz-linux
+    cmdline: root=UUID=$ROOT_UUID rw
+    module_path: boot():/initramfs-linux-fallback.img
+LIMINECONF
+
+if [ -f "$EFI_DIR/EFI/Microsoft/Boot/bootmgfw.efi" ]; then
+    cat <<'LIMINEWIN' >> "$EFI_DIR/EFI/limine/limine.conf"
+
+/Windows
+    protocol: efi
+    path: boot():/EFI/Microsoft/Boot/bootmgfw.efi
+LIMINEWIN
+fi
+
+cp -f "$EFI_DIR/EFI/limine/BOOTX64.EFI" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
+cp -f "$EFI_DIR/EFI/limine/limine.conf" "$EFI_DIR/EFI/BOOT/limine.conf" || true
+
+if [ "$UEFI_NVRAM_OK" = "true" ]; then
+    efibootmgr --create --disk "$ESP_DISK" --part "$ESP_PARTNUM" --label "Visnux (Limine)" --loader '\EFI\limine\BOOTX64.EFI' --unicode || echo "WARNING: could not create a firmware boot entry for Limine, relying on the fallback path EFI/BOOT/BOOTX64.EFI." >&2
+fi
+BLEOF
+            ;;
+        refind)
+            cat <<BLEOF
+if [ "$UEFI_NVRAM_OK" = "true" ]; then
+    refind-install
+else
+    refind-install --usedefault "$ESP_DEV"
+fi
+if [ \$? -ne 0 ]; then
+    echo "WARNING: refind-install failed, retrying with --usedefault (fallback path, no firmware boot entry)." >&2
+    refind-install --usedefault "$ESP_DEV"
+    if [ \$? -ne 0 ]; then
+        echo "FATAL: refind-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
+        exit 1
+    fi
+fi
+
+cat <<'REFINDCONF' > /boot/refind_linux.conf
+"Boot with standard options"  "root=UUID=$ROOT_UUID rw"
+"Boot to single-user mode"    "root=UUID=$ROOT_UUID rw single"
+REFINDCONF
+BLEOF
+            ;;
+        *)
+            cat <<BLEOF
+if [ "$BOOT_MODE" = "uefi" ]; then
+    pacman -S --noconfirm --overwrite="*" grub efibootmgr os-prober
+    if [ "$UEFI_NVRAM_OK" = "true" ]; then
+        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux
+        if [ \$? -ne 0 ]; then
+            echo "WARNING: grub-install with NVRAM registration failed, retrying with --removable (no firmware boot entry will be created)." >&2
+            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
+            if [ \$? -ne 0 ]; then
+                echo "FATAL: UEFI grub-install failed even with --removable. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
+                exit 1
+            fi
+        fi
+    else
+        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
+        if [ \$? -ne 0 ]; then
+            echo "FATAL: UEFI grub-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
+            exit 1
+        fi
+    fi
+
+    mkdir -p "$EFI_DIR/EFI/BOOT"
+    if [ -f "$EFI_DIR/EFI/Visnux/grubx64.efi" ]; then
+        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
+    fi
+else
+    if [ -z "$GRUB_DISK" ]; then
+        echo "FATAL: could not determine the target disk for BIOS grub-install (findmnt/lsblk gave nothing usable - no /dev/sda assumption made). See log for details." >&2
+        exit 1
+    fi
+    pacman -S --noconfirm --overwrite="*" grub os-prober
+    grub-install --recheck "$GRUB_DISK"
+    if [ \$? -ne 0 ]; then
+        echo "FATAL: BIOS grub-install to $GRUB_DISK failed." >&2
+        exit 1
+    fi
+fi
+
+sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
+sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+grub-mkconfig -o /boot/grub/grub.cfg
+BLEOF
+            ;;
+    esac
+}
+
+resolve_bootloader_packages() {
+    case "$BOOTLOADER" in
+        systemd-boot) BL_PKGS="efibootmgr" ;;
+        limine) BL_PKGS="limine efibootmgr" ;;
+        refind) BL_PKGS="refind efibootmgr" ;;
+        *) BL_PKGS="grub efibootmgr os-prober" ;;
+    esac
+}
+
 > "$LOGFILE"
 
 dialog --title "Visnux Linux" --msgbox "Welcome to Visnux Linux! Before running the installer, partition your drives. Because we do NOT make your drives, do em yourself\n\n With love,\n v1sta_" 0 0; clear
@@ -235,7 +397,7 @@ if ! network_preflight_check; then
 fi
 
 while true; do
-    MENU=$(dialog --title "Installation Menu" --menu "Choose an option" 21 55 9 \
+    MENU=$(dialog --title "Installation Menu" --menu "Choose an option" 22 55 10 \
         1 "User Account" \
         2 "Hostname" \
         3 "Root Password" \
@@ -244,7 +406,8 @@ while true; do
         6 "Wi-Fi Setup (optional)" \
         7 "Boot Mode" \
         8 "GPU Drivers" \
-        9 "Install" 3>&1 1>&2 2>&3 3>&-)
+        9 "Bootloader" \
+        10 "Install" 3>&1 1>&2 2>&3 3>&-)
     
     STATUS=$?
     clear
@@ -368,9 +531,9 @@ while true; do
     if [ "$MENU" == "8" ]; then
         CHOICE=$(dialog --title "GPU Drivers" --menu "Choose your GPU driver setup:" 15 70 6 \
             1 "Auto-detect (recommended)" \
-            2 "AMD Drivers" \
-            3 "Intel Drivers" \
-            4 "NVIDIA GTX/RTX or newer (nvidia-open)" \
+            2 "AMD (Mesa + Vulkan)" \
+            3 "Intel (Mesa + Vulkan + VA-API)" \
+            4 "NVIDIA GTX 16xx / RTX or newer (nvidia-open)" \
             5 "NVIDIA older cards (open-source Nouveau)" \
             6 "Skip / VM (Mesa only)" 3>&1 1>&2 2>&3 3>&-); clear
 
@@ -390,6 +553,29 @@ while true; do
     fi
 
     if [ "$MENU" == "9" ]; then
+        CHOICE=$(dialog --title "Bootloader" --menu "Choose your bootloader:" 14 70 4 \
+            1 "GRUB (BIOS + UEFI, dual-boot via os-prober)" \
+            2 "systemd-boot (UEFI only, systemd init only)" \
+            3 "Limine (UEFI only)" \
+            4 "rEFInd (UEFI only)" 3>&1 1>&2 2>&3 3>&-); clear
+
+        case "$CHOICE" in
+            1) BOOTLOADER="grub" ;;
+            2) BOOTLOADER="systemd-boot" ;;
+            3) BOOTLOADER="limine" ;;
+            4) BOOTLOADER="refind" ;;
+        esac
+
+        if [ -n "$CHOICE" ]; then
+            BL_NOTE=""
+            [ "$BOOTLOADER" == "systemd-boot" ] && BL_NOTE="\n\nsystemd-boot needs the systemd init and your EFI partition mounted at /mnt/boot."
+            [ "$BOOTLOADER" == "limine" ] && BL_NOTE="\n\nLimine needs your EFI partition mounted at /mnt/boot."
+            [ "$BOOTLOADER" == "refind" ] && BL_NOTE="\n\nrEFInd needs a UEFI system."
+            dialog --title "Bootloader Set" --msgbox "Bootloader set to: $BOOTLOADER$BL_NOTE" 0 0; clear
+        fi
+    fi
+
+    if [ "$MENU" == "10" ]; then
 
         MISSING=""
         [ -z "$USER_" ] && MISSING="${MISSING}\n - User Account"
@@ -464,6 +650,39 @@ while true; do
             clear
         fi
 
+        if [ "$BOOTLOADER" != "grub" ]; then
+            if [ "$BOOT_MODE" != "uefi" ]; then
+                dialog --title "Bootloader Error" --msgbox "$BOOTLOADER only supports UEFI, but the installer is set to BIOS/Legacy.\n\nChoose GRUB in the Bootloader menu, or fix the Boot Mode." 0 0; clear
+                continue
+            fi
+            if [ -z "$(findmnt -no UUID /mnt 2>/dev/null)" ]; then
+                dialog --title "Bootloader Error" --msgbox "Could not read the UUID of the root partition mounted at /mnt, which $BOOTLOADER needs for its boot entry." 0 0; clear
+                continue
+            fi
+        fi
+
+        if [ "$BOOTLOADER" == "systemd-boot" ] && [ "$INIT" != "1" ]; then
+            dialog --title "Bootloader Error" --msgbox "systemd-boot ships with systemd, so it is only available with the systemd init.\n\nChoose GRUB, Limine or rEFInd for openrc, runit or dinit." 0 0; clear
+            continue
+        fi
+
+        if { [ "$BOOTLOADER" == "systemd-boot" ] || [ "$BOOTLOADER" == "limine" ]; } && [ "$EFI_DIR" != "/boot" ]; then
+            dialog --title "Bootloader Error" --msgbox "$BOOTLOADER keeps the kernel and initramfs on the EFI partition, so it must be mounted at /mnt/boot (not /mnt/boot/efi).\n\nRemount it there, or choose GRUB or rEFInd." 0 0; clear
+            continue
+        fi
+
+        if { [ "$BOOTLOADER" == "systemd-boot" ] || [ "$BOOTLOADER" == "limine" ]; } && [ -n "$EFI_DIR" ]; then
+            ESP_SIZE_MB=$(df -Pm "/mnt${EFI_DIR}" 2>/dev/null | awk 'NR==2 {print $2}')
+            if [ -n "$ESP_SIZE_MB" ] && [ "$ESP_SIZE_MB" -lt 300 ]; then
+                dialog --title "EFI Partition Small" --yesno "Your EFI partition is only ${ESP_SIZE_MB} MB. $BOOTLOADER stores the kernel and initramfs images on it, and they need roughly 200-300 MB (more with the fallback initramfs).\n\nContinue anyway?" 0 0
+                if [ $? -ne 0 ]; then
+                    clear
+                    continue
+                fi
+                clear
+            fi
+        fi
+
         dialog --title "Warning!" --yesno "If you click confirm, Visnux Linux will install on your disk/partition at /mnt. THIS ACTION CANNOT BE REVERSED!\n\nSO do it at your own risk!!" 0 0
         
         STATUS=$?
@@ -487,16 +706,28 @@ while true; do
                 echo "WARNING: could not auto-detect the target disk from /mnt (findmnt/lsblk gave nothing usable)." >> "$LOGFILE"
             fi
 
+            ROOT_UUID=$(findmnt -no UUID /mnt 2>/dev/null)
+            [ -z "$ROOT_UUID" ] && ROOT_UUID=$(blkid -s UUID -o value "$ROOT_PART" 2>/dev/null)
+            ESP_DEV=""
+            ESP_DISK=""
+            ESP_PARTNUM=""
+            if [ -n "$EFI_DIR" ]; then
+                ESP_DEV=$(findmnt -no SOURCE "/mnt${EFI_DIR}" 2>/dev/null)
+                ESP_PKNAME=$(lsblk -no pkname "$ESP_DEV" 2>/dev/null)
+                [ -n "$ESP_PKNAME" ] && ESP_DISK="/dev/$ESP_PKNAME"
+                ESP_PARTNUM=$(cat "/sys/class/block/$(basename "$ESP_DEV")/partition" 2>/dev/null)
+            fi
+            resolve_bootloader_packages
             resolve_gpu_packages
             INIT_OK=true
-            echo "=== Installing Visnux - be a tree <3 ==="
+            echo "=== Installing Visnux - this takes a while, please do not close this window ==="
             fix_keyrings_and_time
 
 #systemd
             if [ "$INIT" == "1" ]; then
                 sed -i 's/^#*ParallelDownloads = .*/ParallelDownloads = 12/' /etc/pacman.conf
                 
-                pacstrap -K /mnt base base-devel linux linux-firmware sof-firmware grub efibootmgr os-prober sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -K /mnt base base-devel linux linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 
                 if [ "$INIT_OK" == "true" ]; then
                     genfstab -U /mnt > /mnt/etc/fstab
@@ -580,46 +811,7 @@ useradd -m -G wheel "$USER_"
 echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-if [ "$BOOT_MODE" = "uefi" ]; then
-    pacman -S --noconfirm --overwrite="*" grub efibootmgr os-prober
-    if [ "$UEFI_NVRAM_OK" = "true" ]; then
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux
-        if [ \$? -ne 0 ]; then
-            echo "WARNING: grub-install with NVRAM registration failed, retrying with --removable (no firmware boot entry will be created)." >&2
-            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-            if [ \$? -ne 0 ]; then
-                echo "FATAL: UEFI grub-install failed even with --removable. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-                exit 1
-            fi
-        fi
-    else
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-        if [ \$? -ne 0 ]; then
-            echo "FATAL: UEFI grub-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-            exit 1
-        fi
-    fi
-
-    mkdir -p "$EFI_DIR/EFI/BOOT"
-    if [ -f "$EFI_DIR/EFI/Visnux/grubx64.efi" ]; then
-        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
-    fi
-else
-    if [ -z "$GRUB_DISK" ]; then
-        echo "FATAL: could not determine the target disk for BIOS grub-install (findmnt/lsblk gave nothing usable - no /dev/sda assumption made). See log for details." >&2
-        exit 1
-    fi
-    pacman -S --noconfirm --overwrite="*" grub os-prober
-    grub-install --recheck "$GRUB_DISK"
-    if [ \$? -ne 0 ]; then
-        echo "FATAL: BIOS grub-install to $GRUB_DISK failed." >&2
-        exit 1
-    fi
-fi
-
-sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
-sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-grub-mkconfig -o /boot/grub/grub.cfg
+$(bootloader_chroot_script)
 
 if [ "$DE" == "1" ]; then
     pacman -S plasma konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon --overwrite="*" --noconfirm
@@ -678,7 +870,7 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware grub efibootmgr pipewire pipewire-pulse wireplumber os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -764,46 +956,7 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 mkinitcpio -P
 
-if [ "$BOOT_MODE" = "uefi" ]; then
-    pacman -S --noconfirm --overwrite="*" grub efibootmgr os-prober
-    if [ "$UEFI_NVRAM_OK" = "true" ]; then
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux
-        if [ \$? -ne 0 ]; then
-            echo "WARNING: grub-install with NVRAM registration failed, retrying with --removable (no firmware boot entry will be created)." >&2
-            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-            if [ \$? -ne 0 ]; then
-                echo "FATAL: UEFI grub-install failed even with --removable. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-                exit 1
-            fi
-        fi
-    else
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-        if [ \$? -ne 0 ]; then
-            echo "FATAL: UEFI grub-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-            exit 1
-        fi
-    fi
-
-    mkdir -p "$EFI_DIR/EFI/BOOT"
-    if [ -f "$EFI_DIR/EFI/Visnux/grubx64.efi" ]; then
-        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
-    fi
-else
-    if [ -z "$GRUB_DISK" ]; then
-        echo "FATAL: could not determine the target disk for BIOS grub-install (findmnt/lsblk gave nothing usable - no /dev/sda assumption made). See log for details." >&2
-        exit 1
-    fi
-    pacman -S --noconfirm --overwrite="*" grub os-prober
-    grub-install --recheck "$GRUB_DISK"
-    if [ \$? -ne 0 ]; then
-        echo "FATAL: BIOS grub-install to $GRUB_DISK failed." >&2
-        exit 1
-    fi
-fi
-
-sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
-sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-grub-mkconfig -o /boot/grub/grub.cfg
+$(bootloader_chroot_script)
 
 mkdir -p /usr/local/bin /etc/xdg/autostart
 
@@ -932,7 +1085,7 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit linux linux-firmware sof-firmware grub efibootmgr os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit linux linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1022,46 +1175,7 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 mkinitcpio -P
 
-if [ "$BOOT_MODE" = "uefi" ]; then
-    pacman -S --noconfirm --overwrite="*" grub efibootmgr os-prober
-    if [ "$UEFI_NVRAM_OK" = "true" ]; then
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux
-        if [ \$? -ne 0 ]; then
-            echo "WARNING: grub-install with NVRAM registration failed, retrying with --removable (no firmware boot entry will be created)." >&2
-            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-            if [ \$? -ne 0 ]; then
-                echo "FATAL: UEFI grub-install failed even with --removable. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-                exit 1
-            fi
-        fi
-    else
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-        if [ \$? -ne 0 ]; then
-            echo "FATAL: UEFI grub-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-            exit 1
-        fi
-    fi
-
-    mkdir -p "$EFI_DIR/EFI/BOOT"
-    if [ -f "$EFI_DIR/EFI/Visnux/grubx64.efi" ]; then
-        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
-    fi
-else
-    if [ -z "$GRUB_DISK" ]; then
-        echo "FATAL: could not determine the target disk for BIOS grub-install (findmnt/lsblk gave nothing usable - no /dev/sda assumption made). See log for details." >&2
-        exit 1
-    fi
-    pacman -S --noconfirm --overwrite="*" grub os-prober
-    grub-install --recheck "$GRUB_DISK"
-    if [ \$? -ne 0 ]; then
-        echo "FATAL: BIOS grub-install to $GRUB_DISK failed." >&2
-        exit 1
-    fi
-fi
-
-sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
-sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-grub-mkconfig -o /boot/grub/grub.cfg
+$(bootloader_chroot_script)
 
 mkdir -p /usr/local/bin /etc/xdg/autostart
 
@@ -1194,7 +1308,7 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit linux linux-firmware sof-firmware grub efibootmgr os-prober artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit linux linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1284,46 +1398,7 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 mkinitcpio -P
 
-if [ "$BOOT_MODE" = "uefi" ]; then
-    pacman -S --noconfirm --overwrite="*" grub efibootmgr os-prober
-    if [ "$UEFI_NVRAM_OK" = "true" ]; then
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux
-        if [ \$? -ne 0 ]; then
-            echo "WARNING: grub-install with NVRAM registration failed, retrying with --removable (no firmware boot entry will be created)." >&2
-            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-            if [ \$? -ne 0 ]; then
-                echo "FATAL: UEFI grub-install failed even with --removable. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-                exit 1
-            fi
-        fi
-    else
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-        if [ \$? -ne 0 ]; then
-            echo "FATAL: UEFI grub-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-            exit 1
-        fi
-    fi
-
-    mkdir -p "$EFI_DIR/EFI/BOOT"
-    if [ -f "$EFI_DIR/EFI/Visnux/grubx64.efi" ]; then
-        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
-    fi
-else
-    if [ -z "$GRUB_DISK" ]; then
-        echo "FATAL: could not determine the target disk for BIOS grub-install (findmnt/lsblk gave nothing usable - no /dev/sda assumption made). See log for details." >&2
-        exit 1
-    fi
-    pacman -S --noconfirm --overwrite="*" grub os-prober
-    grub-install --recheck "$GRUB_DISK"
-    if [ \$? -ne 0 ]; then
-        echo "FATAL: BIOS grub-install to $GRUB_DISK failed." >&2
-        exit 1
-    fi
-fi
-
-sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
-sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-grub-mkconfig -o /boot/grub/grub.cfg
+$(bootloader_chroot_script)
 
 mkdir -p /usr/local/bin /etc/xdg/autostart
 

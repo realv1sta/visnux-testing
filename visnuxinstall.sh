@@ -236,44 +236,6 @@ resolve_gpu_packages() {
 
 bootloader_chroot_script() {
     case "$BOOTLOADER" in
-        systemd-boot)
-            cat <<BLEOF
-if [ "$UEFI_NVRAM_OK" = "true" ]; then
-    bootctl --esp-path="$EFI_DIR" install
-else
-    bootctl --esp-path="$EFI_DIR" --no-variables install
-fi
-if [ \$? -ne 0 ]; then
-    echo "FATAL: bootctl install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-    exit 1
-fi
-
-mkdir -p "$EFI_DIR/loader/entries"
-
-cat <<'SDLOADER' > "$EFI_DIR/loader/loader.conf"
-default visnux.conf
-timeout 5
-console-mode max
-editor no
-SDLOADER
-
-cat <<'SDENTRY' > "$EFI_DIR/loader/entries/visnux.conf"
-title   Visnux Linux
-linux   /vmlinuz-linux
-initrd  /initramfs-linux.img
-options root=UUID=$ROOT_UUID rw
-SDENTRY
-
-cat <<'SDFALLBACK' > "$EFI_DIR/loader/entries/visnux-fallback.conf"
-title   Visnux Linux (fallback initramfs)
-linux   /vmlinuz-linux
-initrd  /initramfs-linux-fallback.img
-options root=UUID=$ROOT_UUID rw
-SDFALLBACK
-
-systemctl enable systemd-boot-update.service || true
-BLEOF
-            ;;
         limine)
             cat <<BLEOF
 mkdir -p "$EFI_DIR/EFI/limine" "$EFI_DIR/EFI/BOOT"
@@ -387,7 +349,6 @@ BLEOF
 
 resolve_bootloader_packages() {
     case "$BOOTLOADER" in
-        systemd-boot) BL_PKGS="efibootmgr" ;;
         limine) BL_PKGS="limine efibootmgr" ;;
         refind) BL_PKGS="refind efibootmgr" ;;
         *) BL_PKGS="grub efibootmgr os-prober" ;;
@@ -559,22 +520,19 @@ while true; do
     fi
 
     if [ "$MENU" == "9" ]; then
-        CHOICE=$(dialog --title "Bootloader" --menu "Choose your bootloader:" 14 70 4 \
+        CHOICE=$(dialog --title "Bootloader" --menu "Choose your bootloader:" 12 70 3 \
             1 "GRUB (BIOS + UEFI, dual-boot via os-prober)" \
-            2 "systemd-boot (UEFI only, systemd init only)" \
-            3 "Limine (UEFI only)" \
-            4 "rEFInd (UEFI only)" 3>&1 1>&2 2>&3 3>&-); clear
+            2 "Limine (UEFI only)" \
+            3 "rEFInd (UEFI only)" 3>&1 1>&2 2>&3 3>&-); clear
 
         case "$CHOICE" in
             1) BOOTLOADER="grub" ;;
-            2) BOOTLOADER="systemd-boot" ;;
-            3) BOOTLOADER="limine" ;;
-            4) BOOTLOADER="refind" ;;
+            2) BOOTLOADER="limine" ;;
+            3) BOOTLOADER="refind" ;;
         esac
 
         if [ -n "$CHOICE" ]; then
             BL_NOTE=""
-            [ "$BOOTLOADER" == "systemd-boot" ] && BL_NOTE="\n\nsystemd-boot needs the systemd init and your EFI partition mounted at /mnt/boot."
             [ "$BOOTLOADER" == "limine" ] && BL_NOTE="\n\nLimine needs your EFI partition mounted at /mnt/boot."
             [ "$BOOTLOADER" == "refind" ] && BL_NOTE="\n\nrEFInd needs a UEFI system."
             dialog --title "Bootloader Set" --msgbox "Bootloader set to: $BOOTLOADER$BL_NOTE" 0 0; clear
@@ -667,17 +625,13 @@ while true; do
             fi
         fi
 
-        if [ "$BOOTLOADER" == "systemd-boot" ] && [ "$INIT" != "1" ]; then
-            dialog --title "Bootloader Error" --msgbox "systemd-boot ships with systemd, so it is only available with the systemd init.\n\nChoose GRUB, Limine or rEFInd for openrc, runit or dinit." 0 0; clear
-            continue
-        fi
 
-        if { [ "$BOOTLOADER" == "systemd-boot" ] || [ "$BOOTLOADER" == "limine" ]; } && [ "$EFI_DIR" != "/boot" ]; then
+        if [ "$BOOTLOADER" == "limine" ] && [ "$EFI_DIR" != "/boot" ]; then
             dialog --title "Bootloader Error" --msgbox "$BOOTLOADER keeps the kernel and initramfs on the EFI partition, so it must be mounted at /mnt/boot (not /mnt/boot/efi).\n\nRemount it there, or choose GRUB or rEFInd." 0 0; clear
             continue
         fi
 
-        if { [ "$BOOTLOADER" == "systemd-boot" ] || [ "$BOOTLOADER" == "limine" ]; } && [ -n "$EFI_DIR" ]; then
+        if [ "$BOOTLOADER" == "limine" ] && [ -n "$EFI_DIR" ]; then
             ESP_SIZE_MB=$(df -Pm "/mnt${EFI_DIR}" 2>/dev/null | awk 'NR==2 {print $2}')
             if [ -n "$ESP_SIZE_MB" ] && [ "$ESP_SIZE_MB" -lt 300 ]; then
                 dialog --title "EFI Partition Small" --yesno "Your EFI partition is only ${ESP_SIZE_MB} MB. $BOOTLOADER stores the kernel and initramfs images on it, and they need roughly 200-300 MB (more with the fallback initramfs).\n\nContinue anyway?" 0 0

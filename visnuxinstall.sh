@@ -15,8 +15,43 @@ GPU_CHOICE=""
 GPU_PKGS=""
 GPU_LABEL=""
 BOOTLOADER="grub"
+KERNEL_CHOICE="visnux"
+KERNEL_PKGS="visnux-kernel visnux-kernel-headers"
+KERNEL_IMAGE="vmlinuz-visnux"
+INITRAMFS_IMAGE="initramfs-visnux.img"
+FALLBACK_IMAGE="initramfs-visnux-fallback.img"
 BL_PKGS=""
 LOGFILE="/tmp/visnux_install.log"
+
+append_elov_repo() {
+    local conf="$1"
+    [ -f "$conf" ] || return 1
+    if ! grep -q '^\[ELOV\]$' "$conf"; then
+        cat >> "$conf" <<'ELOVCONF'
+
+[ELOV]
+SigLevel = Optional TrustAll
+Server = https://realv1sta.github.io/ELOV
+ELOVCONF
+    fi
+}
+
+resolve_kernel_packages() {
+    case "$KERNEL_CHOICE" in
+        visnux)
+            KERNEL_PKGS="visnux-kernel visnux-kernel-headers"
+            KERNEL_IMAGE="vmlinuz-visnux"
+            INITRAMFS_IMAGE="initramfs-visnux.img"
+            FALLBACK_IMAGE="initramfs-visnux-fallback.img"
+            ;;
+        *)
+            KERNEL_PKGS="linux linux-headers"
+            KERNEL_IMAGE="vmlinuz-linux"
+            INITRAMFS_IMAGE="initramfs-linux.img"
+            FALLBACK_IMAGE="initramfs-linux-fallback.img"
+            ;;
+    esac
+}
 
 check_mount() {
     mountpoint -q /mnt
@@ -285,20 +320,32 @@ if [ \$? -ne 0 ]; then
     exit 1
 fi
 
-cat <<'LIMINECONF' > "$EFI_DIR/EFI/limine/limine.conf"
+KERNEL_IMAGE="$KERNEL_IMAGE"
+INITRAMFS_IMAGE="$INITRAMFS_IMAGE"
+FALLBACK_IMAGE="$FALLBACK_IMAGE"
+[ -f "/boot/\$KERNEL_IMAGE" ] || KERNEL_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf '%f\n' | head -n1)
+[ -f "/boot/\$INITRAMFS_IMAGE" ] || INITRAMFS_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'initramfs-*.img' ! -name '*fallback*' -printf '%f\n' | head -n1)
+[ -f "/boot/\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'initramfs-*-fallback.img' -printf '%f\n' | head -n1)
+[ -n "\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE="\$INITRAMFS_IMAGE"
+if [ -z "\$KERNEL_IMAGE" ] || [ -z "\$INITRAMFS_IMAGE" ]; then
+    echo "FATAL: could not locate the installed kernel or initramfs under /boot." >&2
+    exit 1
+fi
+
+cat <<LIMINECONF > "$EFI_DIR/EFI/limine/limine.conf"
 timeout: 5
 
 /Visnux Linux
     protocol: linux
-    path: boot():/vmlinuz-linux
+    path: boot():/\$KERNEL_IMAGE
     cmdline: root=UUID=$ROOT_UUID rw
-    module_path: boot():/initramfs-linux.img
+    module_path: boot():/\$INITRAMFS_IMAGE
 
 /Visnux Linux (fallback initramfs)
     protocol: linux
-    path: boot():/vmlinuz-linux
+    path: boot():/\$KERNEL_IMAGE
     cmdline: root=UUID=$ROOT_UUID rw
-    module_path: boot():/initramfs-linux-fallback.img
+    module_path: boot():/\$FALLBACK_IMAGE
 LIMINECONF
 
 if [ -f "$EFI_DIR/EFI/Microsoft/Boot/bootmgfw.efi" ]; then
@@ -404,7 +451,7 @@ if ! network_preflight_check; then
 fi
 
 while true; do
-    MENU=$(dialog --title "Installation Menu" --menu "Choose an option" 22 55 10 \
+    MENU=$(dialog --title "Installation Menu" --menu "Choose an option" 23 60 11 \
         1 "User Account" \
         2 "Hostname" \
         3 "Root Password" \
@@ -414,7 +461,8 @@ while true; do
         7 "Boot Mode" \
         8 "GPU Drivers" \
         9 "Bootloader" \
-        10 "Install" 3>&1 1>&2 2>&3 3>&-)
+        10 "Kernel" \
+        11 "Install" 3>&1 1>&2 2>&3 3>&-)
     
     STATUS=$?
     clear
@@ -580,6 +628,17 @@ while true; do
     fi
 
     if [ "$MENU" == "10" ]; then
+        CHOICE=$(dialog --title "Kernel Selection" --menu "Choose the kernel for your Visnux installation:" 12 72 2 \
+            visnux "VISNUX kernel (visnux-kernel + visnux-kernel-headers) [DEFAULT]" \
+            arch "Arch Linux kernel (linux + linux-headers)" 3>&1 1>&2 2>&3 3>&-); clear
+        if [ -n "$CHOICE" ]; then
+            KERNEL_CHOICE="$CHOICE"
+            resolve_kernel_packages
+            dialog --title "Kernel Set" --msgbox "Selected: $KERNEL_CHOICE\nPackages: $KERNEL_PKGS" 0 0; clear
+        fi
+    fi
+
+    if [ "$MENU" == "11" ]; then
 
         MISSING=""
         [ -z "$USER_" ] && MISSING="${MISSING}\n - User Account"
@@ -721,6 +780,8 @@ while true; do
             INIT_OK=true
             echo "=== Installing Visnux - be a tree <3 ==="
             fix_keyrings_and_time
+            append_elov_repo /etc/pacman.conf
+            resolve_kernel_packages
 
 #systemd
             if [ "$INIT" == "1" ]; then
@@ -728,7 +789,7 @@ while true; do
                 
                 bootstrap_keyring archlinux-keyring /etc/pacman.conf archlinux
 
-                pacstrap -K /mnt base base-devel linux linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -K /mnt base base-devel $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 
                 if [ "$INIT_OK" == "true" ]; then
                     genfstab -U /mnt > /mnt/etc/fstab
@@ -737,6 +798,7 @@ while true; do
 
                     sed -i 's/^#*ParallelDownloads = .*/ParallelDownloads = 12/' /mnt/etc/pacman.conf
                     sed -i '/^ParallelDownloads = 12/a Color\nILoveCandy' /mnt/etc/pacman.conf
+                    append_elov_repo /mnt/etc/pacman.conf
 
                     arch-chroot /mnt /bin/bash 2>&1 <<EOF | tee -a "$LOGFILE"
 pacman -Sy --noconfirm archlinux-keyring || true
@@ -882,10 +944,11 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
+                append_elov_repo "$ARTIX_CONF"
                 bootstrap_keyring artix-keyring "$ARTIX_CONF" artix
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc linux linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1108,10 +1171,11 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
+                append_elov_repo "$ARTIX_CONF"
                 bootstrap_keyring artix-keyring "$ARTIX_CONF" artix
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit linux linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1342,10 +1406,11 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
+                append_elov_repo "$ARTIX_CONF"
                 bootstrap_keyring artix-keyring "$ARTIX_CONF" artix
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit linux linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1537,6 +1602,55 @@ SVCEOF
                     fi
                 fi
                 rm -f "$ARTIX_CONF"
+            fi
+
+            # Hard verification: never report a successful install unless the selected
+            # kernel AND its matching headers are installed in the target system.
+            if [ "$INIT_OK" == "true" ]; then
+                echo "=== Verifying selected kernel and matching headers ===" | tee -a "$LOGFILE"
+                append_elov_repo /mnt/etc/pacman.conf || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    arch-chroot /mnt pacman -Sy --noconfirm 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
+                if [ "$INIT_OK" == "true" ]; then
+                    # Explicitly request both packages again; --needed leaves already
+                    # installed packages untouched and repairs any missing selection.
+                    arch-chroot /mnt pacman -S --needed --noconfirm $KERNEL_PKGS 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
+                if [ "$INIT_OK" == "true" ]; then
+                    for kernel_pkg in $KERNEL_PKGS; do
+                        if ! arch-chroot /mnt pacman -Q "$kernel_pkg" >> "$LOGFILE" 2>&1; then
+                            echo "FATAL: required kernel package '$kernel_pkg' is not installed." | tee -a "$LOGFILE"
+                            INIT_OK=false
+                        fi
+                    done
+                fi
+                if [ "$INIT_OK" != "true" ]; then
+                    echo "FATAL: selected kernel package set ($KERNEL_PKGS) could not be installed and verified. Refusing to report success." | tee -a "$LOGFILE"
+                fi
+            fi
+
+            if [ "$INIT_OK" == "true" ]; then
+                echo "=== Installing ELOV fetch utility ===" >> "$LOGFILE"
+                arch-chroot /mnt /bin/bash 2>&1 <<FETCHEOF | tee -a "$LOGFILE"
+pacman -S --needed --noconfirm git base-devel || echo "WARNING: could not install fetch build dependencies." >&2
+FETCH_TMP=\$(mktemp -d /tmp/visnux-fetch.XXXXXX)
+if command -v git >/dev/null 2>&1 && command -v make >/dev/null 2>&1 && git clone --depth 1 https://github.com/areofyl/fetch.git "\$FETCH_TMP/fetch"; then
+    make -C "\$FETCH_TMP/fetch" clean install || echo "WARNING: fetch build/install failed." >&2
+else
+    echo "WARNING: fetch could not be cloned or build tools are unavailable." >&2
+fi
+rm -rf "\$FETCH_TMP"
+install -d -o "$USER_" -g "$USER_" "/home/$USER_/.config/fetch"
+if [ -s "/home/$USER_/.config/fastfetch/logo.txt" ]; then
+    install -m 644 -o "$USER_" -g "$USER_" "/home/$USER_/.config/fastfetch/logo.txt" "/home/$USER_/.config/fetch/logo.txt"
+fi
+if ! grep -Fqx "alias fetch='command fetch'" "/home/$USER_/.bashrc" 2>/dev/null; then
+    printf '%s\n' "alias fetch='command fetch'" >> "/home/$USER_/.bashrc"
+fi
+chown "$USER_:$USER_" "/home/$USER_/.bashrc"
+FETCHEOF
+                [ $? -ne 0 ] && INIT_OK=false
             fi
 
             if [ "$INIT_OK" == "true" ]; then

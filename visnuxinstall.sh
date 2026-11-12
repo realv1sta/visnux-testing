@@ -829,7 +829,7 @@ cat <<HOSTSEOF > /etc/hosts
 127.0.1.1   $HOST.localdomain $HOST
 HOSTSEOF
 
-mkinitcpio -P
+if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
 
 cat <<OSSEOF > /etc/os-release
 NAME="Visnux"
@@ -904,7 +904,7 @@ done
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
     case " $GPU_PKGS " in
-        *" nvidia-open "*) mkinitcpio -P ;;
+        *" nvidia-open "*) if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi ;;
     esac
 fi
 
@@ -1046,7 +1046,7 @@ useradd -m -G wheel,audio,video "$USER_"
 echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-mkinitcpio -P
+if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
 
 $(bootloader_chroot_script)
 
@@ -1117,7 +1117,7 @@ done
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
     case " $GPU_PKGS " in
-        *" nvidia-open "*) mkinitcpio -P ;;
+        *" nvidia-open "*) if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi ;;
     esac
 fi
 EOF
@@ -1282,7 +1282,7 @@ useradd -m -G wheel,audio,video "$USER_"
 echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-mkinitcpio -P
+if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
 
 $(bootloader_chroot_script)
 
@@ -1352,7 +1352,7 @@ done
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
     case " $GPU_PKGS " in
-        *" nvidia-open "*) mkinitcpio -P ;;
+        *" nvidia-open "*) if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi ;;
     esac
 fi
 EOF
@@ -1522,7 +1522,7 @@ useradd -m -G wheel,audio,video "$USER_"
 echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-mkinitcpio -P
+if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
 
 $(bootloader_chroot_script)
 
@@ -1592,7 +1592,7 @@ done
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
     case " $GPU_PKGS " in
-        *" nvidia-open "*) mkinitcpio -P ;;
+        *" nvidia-open "*) if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi ;;
     esac
 fi
 EOF
@@ -1654,32 +1654,48 @@ SVCEOF
                 fi
             fi
 
-            # Rebuild initramfs only after the selected kernel is installed, then
-            # regenerate GRUB so BIOS/MBR boots the final kernel/initramfs pair.
+            # Generate a real initramfs even when the third-party VISNUX package
+            # does not ship an /etc/mkinitcpio.d/*.preset file.
             if [ "$INIT_OK" == "true" ]; then
                 echo "=== Rebuilding initramfs and refreshing boot entries ===" | tee -a "$LOGFILE"
-                if [ "$BOOTLOADER" == "grub" ]; then
-                    arch-chroot /mnt /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
+                arch-chroot /mnt /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
 set -e
-mkinitcpio -P
-shopt -s nullglob
-kernel_images=(/boot/vmlinuz-*)
-initramfs_images=(/boot/initramfs-*.img)
-if [ ${#kernel_images[@]} -eq 0 ]; then
-    echo "FATAL: no kernel image found in /boot after mkinitcpio." >&2
-    exit 1
+mkdir -p /etc/mkinitcpio.d /boot
+
+# Select the installed kernel image and its matching module release.
+if [ -f /boot/vmlinuz-visnux ]; then
+    kernel_image=/boot/vmlinuz-visnux
+    preset_name=visnux
+elif [ -f /boot/vmlinuz-linux ]; then
+    kernel_image=/boot/vmlinuz-linux
+    preset_name=linux
+else
+    kernel_image=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print -quit)
+    [ -n "$kernel_image" ] || { echo "FATAL: no kernel image found in /boot" >&2; exit 1; }
+    preset_name=${kernel_image##*/vmlinuz-}
 fi
-if [ ${#initramfs_images[@]} -eq 0 ]; then
-    echo "FATAL: no initramfs image found in /boot after mkinitcpio." >&2
-    exit 1
+
+# mkinitcpio can resolve the kernel release from the image path.
+# Write a package-independent preset so future initramfs rebuilds work too.
+preset_file=/etc/mkinitcpio.d/${preset_name}.preset
+cat > "$preset_file" <<PRESETEOF
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="$kernel_image"
+PRESETS=('default' 'fallback')
+default_image="/boot/initramfs-${preset_name}.img"
+fallback_image="/boot/initramfs-${preset_name}-fallback.img"
+fallback_options="-S autodetect"
+PRESETEOF
+
+mkinitcpio -p "$preset_name"
+[ -s "/boot/initramfs-${preset_name}.img" ] || { echo "FATAL: default initramfs was not created" >&2; exit 1; }
+[ -s "/boot/initramfs-${preset_name}-fallback.img" ] || { echo "FATAL: fallback initramfs was not created" >&2; exit 1; }
+
+if command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
+    grub-mkconfig -o /boot/grub/grub.cfg
+    grep -Eq 'vmlinuz-' /boot/grub/grub.cfg || { echo "FATAL: generated GRUB config contains no Linux kernel entry" >&2; exit 1; }
 fi
-mkdir -p /boot/grub
-grub-mkconfig -o /boot/grub/grub.cfg
-grep -Eq 'vmlinuz-' /boot/grub/grub.cfg || { echo "FATAL: generated GRUB config contains no Linux kernel entry." >&2; exit 1; }
 KERNELBOOTEOF
-                else
-                    arch-chroot /mnt /bin/bash -e -c 'mkinitcpio -P' 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
-                fi
             fi
 
             if [ "$INIT_OK" == "true" ]; then

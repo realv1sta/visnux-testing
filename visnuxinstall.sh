@@ -1654,29 +1654,48 @@ SVCEOF
                 fi
             fi
 
-            # Generate a real initramfs even when the third-party VISNUX package
-            # does not ship an /etc/mkinitcpio.d/*.preset file.
+            # Build the initramfs against the exact kernel release shipped by the
+            # selected package. Do not assume the kernel image is named vmlinuz-visnux:
+            # ELOV currently exposes a versioned image (vmlinuz-7.2.15-visnux).
             if [ "$INIT_OK" == "true" ]; then
-                echo "=== Rebuilding initramfs and refreshing boot entries ===" | tee -a "$LOGFILE"
-                arch-chroot /mnt /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
-set -e
+                echo "=== Building matching initramfs and refreshing GRUB ===" | tee -a "$LOGFILE"
+                arch-chroot /mnt /usr/bin/env ROOT_UUID="$ROOT_UUID" /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
+set -euo pipefail
+
 mkdir -p /etc/mkinitcpio.d /boot
 
-# Select the installed kernel image and its matching module release.
+# Prefer the selected package's known image, then discover a versioned image.
 if [ -f /boot/vmlinuz-visnux ]; then
     kernel_image=/boot/vmlinuz-visnux
-    preset_name=visnux
+elif [ -f /boot/vmlinuz-7.2.15-visnux ]; then
+    kernel_image=/boot/vmlinuz-7.2.15-visnux
 elif [ -f /boot/vmlinuz-linux ]; then
     kernel_image=/boot/vmlinuz-linux
-    preset_name=linux
 else
-    kernel_image=$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print -quit)
-    [ -n "$kernel_image" ] || { echo "FATAL: no kernel image found in /boot" >&2; exit 1; }
-    preset_name=${kernel_image##*/vmlinuz-}
+    kernel_image=$(find /boot -maxdepth 1 -type f \( -name 'vmlinuz-*' -o -name 'vmlinuz' \) -print -quit)
+fi
+[ -n "${kernel_image:-}" ] && [ -s "$kernel_image" ] || { echo "FATAL: no usable kernel image found in /boot" >&2; exit 1; }
+
+# Resolve the exact kernel release from its matching /usr/lib/modules directory.
+# The ELOV kernel uses a versioned filename; its release must have installed modules.
+image_base=${kernel_image##*/}
+case "$image_base" in
+    vmlinuz-visnux) kernel_release=visnux ;;
+    vmlinuz-linux) kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1) ;;
+    vmlinuz-*) kernel_release=${image_base#vmlinuz-} ;;
+    *) kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1) ;;
+esac
+if [ ! -d "/usr/lib/modules/$kernel_release" ]; then
+    echo "FATAL: kernel image $kernel_image has no matching /usr/lib/modules/$kernel_release directory." >&2
+    echo "Installed module releases:" >&2
+    find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '  %f\n' >&2 || true
+    exit 1
 fi
 
-# mkinitcpio can resolve the kernel release from the image path.
-# Write a package-independent preset so future initramfs rebuilds work too.
+# The preset uses the kernel image path as ALL_kver, which mkinitcpio supports
+# and which guarantees the matching release is selected for image generation.
+preset_name=${image_base#vmlinuz-}
+[ "$preset_name" != "$image_base" ] || preset_name="$kernel_release"
 preset_file=/etc/mkinitcpio.d/${preset_name}.preset
 cat > "$preset_file" <<PRESETEOF
 ALL_config="/etc/mkinitcpio.conf"
@@ -1687,13 +1706,42 @@ fallback_image="/boot/initramfs-${preset_name}-fallback.img"
 fallback_options="-S autodetect"
 PRESETEOF
 
-mkinitcpio -p "$preset_name"
-[ -s "/boot/initramfs-${preset_name}.img" ] || { echo "FATAL: default initramfs was not created" >&2; exit 1; }
-[ -s "/boot/initramfs-${preset_name}-fallback.img" ] || { echo "FATAL: fallback initramfs was not created" >&2; exit 1; }
+# Build explicitly instead of relying on package-provided presets or hooks.
+mkinitcpio -k "$kernel_image" -c /etc/mkinitcpio.conf -g "/boot/initramfs-${preset_name}.img"
+mkinitcpio -k "$kernel_image" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}-fallback.img"
 
+for image in "/boot/initramfs-${preset_name}.img" "/boot/initramfs-${preset_name}-fallback.img"; do
+    [ -s "$image" ] || { echo "FATAL: initramfs was not created: $image" >&2; exit 1; }
+    if command -v lsinitcpio >/dev/null 2>&1; then
+        lsinitcpio "$image" >/dev/null || { echo "FATAL: initramfs archive is invalid: $image" >&2; exit 1; }
+    fi
+done
+
+# Keep a ready-to-use diagnostic GRUB entry. Kernel parameters belong on the
+# linux line (never after initrd); this avoids asking users to edit GRUB manually.
 if command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
+    # Replace our own generated diagnostic menu script every install so it
+    # never retains a stale kernel filename after a kernel package update.
+    cat > /etc/grub.d/09_visnux_diagnostics <<GRUBDIAGEOF
+#!/bin/sh
+cat <<'VISNUXGRUBENTRIES'
+menuentry 'Visnux Linux (diagnostic)' --class visnux --class gnu-linux --class gnu --class os {
+    search --no-floppy --fs-uuid --set=root $ROOT_UUID
+    linux $kernel_image root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
+    initrd /boot/initramfs-${preset_name}.img
+}
+
+menuentry 'Visnux Linux (diagnostic, fallback initramfs)' --class visnux --class gnu-linux --class gnu --class os {
+    search --no-floppy --fs-uuid --set=root $ROOT_UUID
+    linux $kernel_image root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
+    initrd /boot/initramfs-${preset_name}-fallback.img
+}
+VISNUXGRUBENTRIES
+GRUBDIAGEOF
+    chmod 755 /etc/grub.d/09_visnux_diagnostics
     grub-mkconfig -o /boot/grub/grub.cfg
-    grep -Eq 'vmlinuz-' /boot/grub/grub.cfg || { echo "FATAL: generated GRUB config contains no Linux kernel entry" >&2; exit 1; }
+    grep -Fq "$kernel_image" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the installed kernel $kernel_image" >&2; exit 1; }
+    grep -Fq "/boot/initramfs-${preset_name}.img" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the generated initramfs" >&2; exit 1; }
 fi
 KERNELBOOTEOF
             fi

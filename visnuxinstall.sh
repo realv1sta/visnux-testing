@@ -30,7 +30,7 @@ append_elov_repo() {
         cat >> "$conf" <<'ELOVCONF'
 
 [ELOV]
-SigLevel = Optional TrustAll
+SigLevel = Optional
 Server = https://realv1sta.github.io/ELOV
 ELOVCONF
     fi
@@ -780,7 +780,12 @@ while true; do
             INIT_OK=true
             echo "=== Installing Visnux - be a tree <3 ==="
             fix_keyrings_and_time
-            append_elov_repo /etc/pacman.conf
+            append_elov_repo /etc/pacman.conf || INIT_OK=false
+            # ELOV's package database must be refreshed after adding its stanza
+            # and BEFORE pacstrap tries to resolve visnux-kernel packages.
+            if [ "$INIT_OK" == "true" ]; then
+                pacman -Sy --noconfirm 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+            fi
             resolve_kernel_packages
 
 #systemd
@@ -789,7 +794,9 @@ while true; do
                 
                 bootstrap_keyring archlinux-keyring /etc/pacman.conf archlinux
 
-                pacstrap -K /mnt base base-devel $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacstrap -C /etc/pacman.conf -K /mnt base base-devel $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
                 
                 if [ "$INIT_OK" == "true" ]; then
                     genfstab -U /mnt > /mnt/etc/fstab
@@ -798,8 +805,9 @@ while true; do
 
                     sed -i 's/^#*ParallelDownloads = .*/ParallelDownloads = 12/' /mnt/etc/pacman.conf
                     sed -i '/^ParallelDownloads = 12/a Color\nILoveCandy' /mnt/etc/pacman.conf
-                    append_elov_repo /mnt/etc/pacman.conf
+                    append_elov_repo /mnt/etc/pacman.conf || INIT_OK=false
 
+                    if [ "$INIT_OK" == "true" ]; then
                     arch-chroot /mnt /bin/bash 2>&1 <<EOF | tee -a "$LOGFILE"
 pacman -Sy --noconfirm archlinux-keyring || true
 
@@ -904,6 +912,7 @@ systemctl enable NetworkManager
 systemctl enable sddm --force
 EOF
                     [ $? -ne 0 ] && INIT_OK=false
+                    fi
                 fi
             fi
 
@@ -944,11 +953,16 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                append_elov_repo "$ARTIX_CONF"
+                append_elov_repo "$ARTIX_CONF" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacman --config "$ARTIX_CONF" -Sy --noconfirm 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
                 bootstrap_keyring artix-keyring "$ARTIX_CONF" artix
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1171,11 +1185,16 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                append_elov_repo "$ARTIX_CONF"
+                append_elov_repo "$ARTIX_CONF" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacman --config "$ARTIX_CONF" -Sy --noconfirm 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
                 bootstrap_keyring artix-keyring "$ARTIX_CONF" artix
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1406,11 +1425,16 @@ Server = https://artixlinux.mirror.garr.it/\$repo/os/\$arch
 Server = https://mirror.freedif.org/artix/\$repo/os/\$arch
 EOF
 
-                append_elov_repo "$ARTIX_CONF"
+                append_elov_repo "$ARTIX_CONF" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacman --config "$ARTIX_CONF" -Sy --noconfirm 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
                 bootstrap_keyring artix-keyring "$ARTIX_CONF" artix
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
-                pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                if [ "$INIT_OK" == "true" ]; then
+                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                fi
 
                 if [ "$INIT_OK" == "true" ]; then
                     cp "$ARTIX_CONF" /mnt/etc/pacman.conf
@@ -1627,6 +1651,34 @@ SVCEOF
                 fi
                 if [ "$INIT_OK" != "true" ]; then
                     echo "FATAL: selected kernel package set ($KERNEL_PKGS) could not be installed and verified. Refusing to report success." | tee -a "$LOGFILE"
+                fi
+            fi
+
+            # Rebuild initramfs only after the selected kernel is installed, then
+            # regenerate GRUB so BIOS/MBR boots the final kernel/initramfs pair.
+            if [ "$INIT_OK" == "true" ]; then
+                echo "=== Rebuilding initramfs and refreshing boot entries ===" | tee -a "$LOGFILE"
+                if [ "$BOOTLOADER" == "grub" ]; then
+                    arch-chroot /mnt /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
+set -e
+mkinitcpio -P
+shopt -s nullglob
+kernel_images=(/boot/vmlinuz-*)
+initramfs_images=(/boot/initramfs-*.img)
+if [ ${#kernel_images[@]} -eq 0 ]; then
+    echo "FATAL: no kernel image found in /boot after mkinitcpio." >&2
+    exit 1
+fi
+if [ ${#initramfs_images[@]} -eq 0 ]; then
+    echo "FATAL: no initramfs image found in /boot after mkinitcpio." >&2
+    exit 1
+fi
+mkdir -p /boot/grub
+grub-mkconfig -o /boot/grub/grub.cfg
+grep -Eq 'vmlinuz-' /boot/grub/grub.cfg || { echo "FATAL: generated GRUB config contains no Linux kernel entry." >&2; exit 1; }
+KERNELBOOTEOF
+                else
+                    arch-chroot /mnt /bin/bash -e -c 'mkinitcpio -P' 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 fi
             fi
 

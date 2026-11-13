@@ -886,9 +886,9 @@ $(bootloader_chroot_script)
 
 DE_PKGS=""
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma xorg-server konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
+    DE_PKGS="plasma konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
 elif [ "$DE" == "2" ]; then
-    DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xclip maim xfce4-pulseaudio-plugin kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
+    DE_PKGS="xorg-server xorg-xinit xorg-xrandr xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar thunar-volman tumbler xfconf exo garcon xfce4-appfinder xfce4-terminal xfce4-power-manager xfce4-whiskermenu-plugin xclip maim xfce4-pulseaudio-plugin kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
 fi
 
 for attempt in 1 2 3; do
@@ -900,6 +900,15 @@ for attempt in 1 2 3; do
     fi
     sleep 5
 done
+
+if [ "$DE" == "2" ]; then
+    echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
+    for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
+        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+    done
+    command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
+    [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
+fi
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1090,10 +1099,10 @@ DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma xorg-server konsole dolphin"
+    DE_PKGS="plasma konsole dolphin"
     DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc pipewire-alsa alsa-utils alsa-utils-openrc"
 elif [ "$DE" == "2" ]; then
-    DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
+    DE_PKGS="xorg-server xorg-xinit xorg-xrandr xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar thunar-volman tumbler xfconf exo garcon xfce4-appfinder xfce4-terminal xfce4-power-manager xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc pipewire-alsa alsa-utils alsa-utils-openrc pavucontrol"
 fi
 
@@ -1113,6 +1122,15 @@ for attempt in 1 2 3; do
     fi
     sleep 5
 done
+
+if [ "$DE" == "2" ]; then
+    echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
+    for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
+        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+    done
+    command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
+    [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
+fi
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1326,10 +1344,10 @@ DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma xorg-server konsole dolphin"
+    DE_PKGS="plasma konsole dolphin"
     DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-runit"
 elif [ "$DE" == "2" ]; then
-    DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
+    DE_PKGS="xorg-server xorg-xinit xorg-xrandr xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar thunar-volman tumbler xfconf exo garcon xfce4-appfinder xfce4-terminal xfce4-power-manager xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-runit pavucontrol"
 fi
 
@@ -1348,6 +1366,15 @@ for attempt in 1 2 3; do
     fi
     sleep 5
 done
+
+if [ "$DE" == "2" ]; then
+    echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
+    for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
+        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+    done
+    command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
+    [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
+fi
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1566,10 +1593,10 @@ DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma xorg-server konsole dolphin"
+    DE_PKGS="plasma konsole dolphin"
     DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-dinit"
 elif [ "$DE" == "2" ]; then
-    DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
+    DE_PKGS="xorg-server xorg-xinit xorg-xrandr xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar thunar-volman tumbler xfconf exo garcon xfce4-appfinder xfce4-terminal xfce4-power-manager xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
     DESKTOP_PKGS="kitty fastfetch sddm xclip maim sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-dinit pavucontrol"
 fi
 
@@ -1588,6 +1615,15 @@ for attempt in 1 2 3; do
     fi
     sleep 5
 done
+
+if [ "$DE" == "2" ]; then
+    echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
+    for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
+        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+    done
+    command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
+    [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
+fi
 
 if [ -n "$GPU_PKGS" ]; then
     pacman -S --noconfirm --needed --overwrite="*" $GPU_PKGS || echo "WARNING: GPU driver install failed ($GPU_PKGS), continuing without it." >&2
@@ -1626,56 +1662,6 @@ SVCEOF
                     fi
                 fi
                 rm -f "$ARTIX_CONF"
-            fi
-
-            # Configure and verify graphical login automatically. A desktop package
-            # being installed is not enough: the selected init must start SDDM at boot.
-            if [ "$INIT_OK" == "true" ]; then
-                echo "=== Configuring graphical desktop startup ===" | tee -a "$LOGFILE"
-                arch-chroot /mnt /usr/bin/env VISNUX_INIT="$INIT" VISNUX_DE="$DE" /bin/bash -e 2>&1 <<'DESKTOPBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
-set -euo pipefail
-
-# Verify the selected desktop and display manager are really installed.
-pacman -Q sddm >/dev/null || { echo "FATAL: SDDM is not installed." >&2; exit 1; }
-case "$VISNUX_DE" in
-    1) pacman -Qq | grep -qx plasma-desktop || { echo "FATAL: KDE Plasma desktop package is not installed." >&2; exit 1; }; pacman -Q xorg-server >/dev/null || { echo "FATAL: Xorg server is not installed for the SDDM greeter." >&2; exit 1; } ;;
-    2) pacman -Q xfce4 xorg-server >/dev/null || { echo "FATAL: XFCE4 or Xorg is not installed." >&2; exit 1; } ;;
-    *) echo "FATAL: no supported desktop environment was selected." >&2; exit 1 ;;
-esac
-
-case "$VISNUX_INIT" in
-    1)
-        systemctl enable NetworkManager.service
-        systemctl enable sddm.service
-        systemctl set-default graphical.target
-        systemctl get-default | grep -qx graphical.target || { echo "FATAL: systemd default target is not graphical.target." >&2; exit 1; }
-        ;;
-    2)
-        command -v rc-update >/dev/null 2>&1 || { echo "FATAL: rc-update is missing for OpenRC." >&2; exit 1; }
-        [ -x /etc/init.d/sddm ] || { echo "FATAL: OpenRC SDDM service (/etc/init.d/sddm) is missing; check sddm-openrc package." >&2; exit 1; }
-        rc-update add dbus default
-        rc-update add elogind default
-        rc-update add NetworkManager default
-        rc-update add sddm default
-        rc-update show default | grep -q sddm || { echo "FATAL: SDDM was not enabled in OpenRC default runlevel." >&2; exit 1; }
-        ;;
-    3)
-        mkdir -p /etc/runit/runsvdir/default
-        [ -d /etc/runit/sv/sddm ] || { echo "FATAL: runit SDDM service directory is missing; check sddm-runit package." >&2; exit 1; }
-        ln -sfn /etc/runit/sv/sddm /etc/runit/runsvdir/default/sddm
-        [ -L /etc/runit/runsvdir/default/sddm ] || { echo "FATAL: failed to enable SDDM under runit." >&2; exit 1; }
-        ;;
-    4)
-        mkdir -p /etc/dinit.d/boot.d
-        [ -f /etc/dinit.d/sddm ] || { echo "FATAL: dinit SDDM service file is missing; check sddm-dinit package." >&2; exit 1; }
-        ln -sfn ../sddm /etc/dinit.d/boot.d/sddm
-        [ -L /etc/dinit.d/boot.d/sddm ] || { echo "FATAL: failed to enable SDDM under dinit." >&2; exit 1; }
-        ;;
-    *) echo "FATAL: unknown init selection '$VISNUX_INIT'." >&2; exit 1 ;;
-esac
-
-echo "Graphical desktop startup configured: DE=$VISNUX_DE init=$VISNUX_INIT"
-DESKTOPBOOTEOF
             fi
 
             # Hard verification: never report a successful install unless the selected
@@ -1742,8 +1728,8 @@ if [ ! -d "/usr/lib/modules/$kernel_release" ]; then
     exit 1
 fi
 
-# The preset points at the kernel image, while the CLI -k option must receive
-# the matching module release (the directory name under /usr/lib/modules).
+# The preset uses the kernel image path as ALL_kver, which mkinitcpio supports
+# and which guarantees the matching release is selected for image generation.
 preset_name=${image_base#vmlinuz-}
 [ "$preset_name" != "$image_base" ] || preset_name="$kernel_release"
 preset_file=/etc/mkinitcpio.d/${preset_name}.preset
@@ -1752,18 +1738,12 @@ ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="$kernel_image"
 PRESETS=('default' 'fallback')
 default_image="/boot/initramfs-${preset_name}.img"
-default_options="-S autodetect"
 fallback_image="/boot/initramfs-${preset_name}-fallback.img"
 fallback_options="-S autodetect"
 PRESETEOF
 
 # Build explicitly instead of relying on package-provided presets or hooks.
-# IMPORTANT: the normal image must also include all modules. The autodetect
-# hook can omit the target machine's storage/filesystem driver when the image
-# is built from the live installer environment. That is why fallback booted
-# while the normal image hung. Skip autodetect for BOTH images for reliable
-# first boot; the fallback remains a separate recovery entry.
-mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}.img"
+mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -g "/boot/initramfs-${preset_name}.img"
 mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}-fallback.img"
 
 for image in "/boot/initramfs-${preset_name}.img" "/boot/initramfs-${preset_name}-fallback.img"; do
@@ -1776,28 +1756,42 @@ done
 # Keep a ready-to-use diagnostic GRUB entry. Kernel parameters belong on the
 # linux line (never after initrd); this avoids asking users to edit GRUB manually.
 if command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
-    # Replace our own generated diagnostic menu script every install so it
-    # never retains a stale kernel filename after a kernel package update.
+    # GRUB paths differ when /boot is a separate filesystem. Search that
+    # filesystem directly in that case; otherwise paths are rooted at /.
+    boot_uuid=$(findmnt -n -o UUID /boot 2>/dev/null || true)
+    [ -n "$boot_uuid" ] || boot_uuid="$ROOT_UUID"
+    if [ "$boot_uuid" != "$ROOT_UUID" ]; then
+        grub_boot_prefix="/"
+    else
+        grub_boot_prefix="/boot/"
+    fi
+    kernel_grub_path="${grub_boot_prefix}${image_base}"
+    default_initrd_name="initramfs-${preset_name}.img"
+    fallback_initrd_name="initramfs-${preset_name}-fallback.img"
+
+    # Replace our generated diagnostic menu script every install so it never
+    # retains stale filenames, and keep kernel arguments on the linux line.
     cat > /etc/grub.d/09_visnux_diagnostics <<GRUBDIAGEOF
 #!/bin/sh
 cat <<'VISNUXGRUBENTRIES'
 menuentry 'Visnux Linux (diagnostic)' --class visnux --class gnu-linux --class gnu --class os {
-    search --no-floppy --fs-uuid --set=root $ROOT_UUID
-    linux $kernel_image root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
-    initrd /boot/initramfs-${preset_name}.img
+    search --no-floppy --fs-uuid --set=root $boot_uuid
+    linux $kernel_grub_path root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
+    initrd ${grub_boot_prefix}${default_initrd_name}
 }
 
 menuentry 'Visnux Linux (diagnostic, fallback initramfs)' --class visnux --class gnu-linux --class gnu --class os {
-    search --no-floppy --fs-uuid --set=root $ROOT_UUID
-    linux $kernel_image root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
-    initrd /boot/initramfs-${preset_name}-fallback.img
+    search --no-floppy --fs-uuid --set=root $boot_uuid
+    linux $kernel_grub_path root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
+    initrd ${grub_boot_prefix}${fallback_initrd_name}
 }
 VISNUXGRUBENTRIES
 GRUBDIAGEOF
     chmod 755 /etc/grub.d/09_visnux_diagnostics
     grub-mkconfig -o /boot/grub/grub.cfg
-    grep -Fq "$kernel_image" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the installed kernel $kernel_image" >&2; exit 1; }
-    grep -Fq "/boot/initramfs-${preset_name}.img" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the generated initramfs" >&2; exit 1; }
+    grep -Fq "$image_base" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the installed kernel $image_base" >&2; exit 1; }
+    grep -Fq "$default_initrd_name" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the generated initramfs $default_initrd_name" >&2; exit 1; }
+    grep -Fq "$fallback_initrd_name" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the fallback initramfs $fallback_initrd_name" >&2; exit 1; }
 fi
 KERNELBOOTEOF
             fi

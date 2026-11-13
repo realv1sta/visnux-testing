@@ -886,7 +886,7 @@ $(bootloader_chroot_script)
 
 DE_PKGS=""
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
+    DE_PKGS="plasma xorg-server konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xclip maim xfce4-pulseaudio-plugin kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
 fi
@@ -1090,7 +1090,7 @@ DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma konsole dolphin"
+    DE_PKGS="plasma xorg-server konsole dolphin"
     DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-openrc power-profiles-daemon power-profiles-daemon-openrc pipewire pipewire-openrc pipewire-pulse pipewire-pulse-openrc wireplumber wireplumber-openrc pipewire-alsa alsa-utils alsa-utils-openrc"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
@@ -1326,7 +1326,7 @@ DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma konsole dolphin"
+    DE_PKGS="plasma xorg-server konsole dolphin"
     DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-runit power-profiles-daemon power-profiles-daemon-runit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-runit"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
@@ -1566,7 +1566,7 @@ DE_PKGS=""
 DESKTOP_PKGS=""
 
 if [ "$DE" == "1" ]; then
-    DE_PKGS="plasma konsole dolphin"
+    DE_PKGS="plasma xorg-server konsole dolphin"
     DESKTOP_PKGS="kitty fastfetch wl-clipboard sddm sddm-dinit power-profiles-daemon power-profiles-daemon-dinit pipewire pipewire-pulse wireplumber pipewire-alsa alsa-utils alsa-utils-dinit"
 elif [ "$DE" == "2" ]; then
     DE_PKGS="xorg-server xfce4 xfce4-whiskermenu-plugin xfce4-pulseaudio-plugin"
@@ -1626,6 +1626,56 @@ SVCEOF
                     fi
                 fi
                 rm -f "$ARTIX_CONF"
+            fi
+
+            # Configure and verify graphical login automatically. A desktop package
+            # being installed is not enough: the selected init must start SDDM at boot.
+            if [ "$INIT_OK" == "true" ]; then
+                echo "=== Configuring graphical desktop startup ===" | tee -a "$LOGFILE"
+                arch-chroot /mnt /usr/bin/env VISNUX_INIT="$INIT" VISNUX_DE="$DE" /bin/bash -e 2>&1 <<'DESKTOPBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
+set -euo pipefail
+
+# Verify the selected desktop and display manager are really installed.
+pacman -Q sddm >/dev/null || { echo "FATAL: SDDM is not installed." >&2; exit 1; }
+case "$VISNUX_DE" in
+    1) pacman -Qq | grep -qx plasma-desktop || { echo "FATAL: KDE Plasma desktop package is not installed." >&2; exit 1; }; pacman -Q xorg-server >/dev/null || { echo "FATAL: Xorg server is not installed for the SDDM greeter." >&2; exit 1; } ;;
+    2) pacman -Q xfce4 xorg-server >/dev/null || { echo "FATAL: XFCE4 or Xorg is not installed." >&2; exit 1; } ;;
+    *) echo "FATAL: no supported desktop environment was selected." >&2; exit 1 ;;
+esac
+
+case "$VISNUX_INIT" in
+    1)
+        systemctl enable NetworkManager.service
+        systemctl enable sddm.service
+        systemctl set-default graphical.target
+        systemctl get-default | grep -qx graphical.target || { echo "FATAL: systemd default target is not graphical.target." >&2; exit 1; }
+        ;;
+    2)
+        command -v rc-update >/dev/null 2>&1 || { echo "FATAL: rc-update is missing for OpenRC." >&2; exit 1; }
+        [ -x /etc/init.d/sddm ] || { echo "FATAL: OpenRC SDDM service (/etc/init.d/sddm) is missing; check sddm-openrc package." >&2; exit 1; }
+        rc-update add dbus default
+        rc-update add elogind default
+        rc-update add NetworkManager default
+        rc-update add sddm default
+        rc-update show default | grep -q sddm || { echo "FATAL: SDDM was not enabled in OpenRC default runlevel." >&2; exit 1; }
+        ;;
+    3)
+        mkdir -p /etc/runit/runsvdir/default
+        [ -d /etc/runit/sv/sddm ] || { echo "FATAL: runit SDDM service directory is missing; check sddm-runit package." >&2; exit 1; }
+        ln -sfn /etc/runit/sv/sddm /etc/runit/runsvdir/default/sddm
+        [ -L /etc/runit/runsvdir/default/sddm ] || { echo "FATAL: failed to enable SDDM under runit." >&2; exit 1; }
+        ;;
+    4)
+        mkdir -p /etc/dinit.d/boot.d
+        [ -f /etc/dinit.d/sddm ] || { echo "FATAL: dinit SDDM service file is missing; check sddm-dinit package." >&2; exit 1; }
+        ln -sfn ../sddm /etc/dinit.d/boot.d/sddm
+        [ -L /etc/dinit.d/boot.d/sddm ] || { echo "FATAL: failed to enable SDDM under dinit." >&2; exit 1; }
+        ;;
+    *) echo "FATAL: unknown init selection '$VISNUX_INIT'." >&2; exit 1 ;;
+esac
+
+echo "Graphical desktop startup configured: DE=$VISNUX_DE init=$VISNUX_INIT"
+DESKTOPBOOTEOF
             fi
 
             # Hard verification: never report a successful install unless the selected
@@ -1692,8 +1742,8 @@ if [ ! -d "/usr/lib/modules/$kernel_release" ]; then
     exit 1
 fi
 
-# The preset uses the kernel image path as ALL_kver, which mkinitcpio supports
-# and which guarantees the matching release is selected for image generation.
+# The preset points at the kernel image, while the CLI -k option must receive
+# the matching module release (the directory name under /usr/lib/modules).
 preset_name=${image_base#vmlinuz-}
 [ "$preset_name" != "$image_base" ] || preset_name="$kernel_release"
 preset_file=/etc/mkinitcpio.d/${preset_name}.preset
@@ -1702,13 +1752,19 @@ ALL_config="/etc/mkinitcpio.conf"
 ALL_kver="$kernel_image"
 PRESETS=('default' 'fallback')
 default_image="/boot/initramfs-${preset_name}.img"
+default_options="-S autodetect"
 fallback_image="/boot/initramfs-${preset_name}-fallback.img"
 fallback_options="-S autodetect"
 PRESETEOF
 
 # Build explicitly instead of relying on package-provided presets or hooks.
-mkinitcpio -k "$kernel_image" -c /etc/mkinitcpio.conf -g "/boot/initramfs-${preset_name}.img"
-mkinitcpio -k "$kernel_image" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}-fallback.img"
+# IMPORTANT: the normal image must also include all modules. The autodetect
+# hook can omit the target machine's storage/filesystem driver when the image
+# is built from the live installer environment. That is why fallback booted
+# while the normal image hung. Skip autodetect for BOTH images for reliable
+# first boot; the fallback remains a separate recovery entry.
+mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}.img"
+mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}-fallback.img"
 
 for image in "/boot/initramfs-${preset_name}.img" "/boot/initramfs-${preset_name}-fallback.img"; do
     [ -s "$image" ] || { echo "FATAL: initramfs was not created: $image" >&2; exit 1; }

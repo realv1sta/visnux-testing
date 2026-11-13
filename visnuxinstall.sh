@@ -310,136 +310,62 @@ resolve_gpu_packages() {
 }
 
 bootloader_chroot_script() {
-    case "$BOOTLOADER" in
-        limine)
-            cat <<BLEOF
-mkdir -p "$EFI_DIR/EFI/limine" "$EFI_DIR/EFI/BOOT"
-cp -f /usr/share/limine/BOOTX64.EFI "$EFI_DIR/EFI/limine/BOOTX64.EFI"
-if [ \$? -ne 0 ]; then
-    echo "FATAL: could not copy the Limine EFI binary. Check that the limine package installed correctly." >&2
-    exit 1
-fi
-
-KERNEL_IMAGE="$KERNEL_IMAGE"
-INITRAMFS_IMAGE="$INITRAMFS_IMAGE"
-FALLBACK_IMAGE="$FALLBACK_IMAGE"
-[ -f "/boot/\$KERNEL_IMAGE" ] || KERNEL_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf '%f\n' | head -n1)
-[ -f "/boot/\$INITRAMFS_IMAGE" ] || INITRAMFS_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'initramfs-*.img' ! -name '*fallback*' -printf '%f\n' | head -n1)
-[ -f "/boot/\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'initramfs-*-fallback.img' -printf '%f\n' | head -n1)
-[ -n "\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE="\$INITRAMFS_IMAGE"
-if [ -z "\$KERNEL_IMAGE" ] || [ -z "\$INITRAMFS_IMAGE" ]; then
-    echo "FATAL: could not locate the installed kernel or initramfs under /boot." >&2
-    exit 1
-fi
-
-cat <<LIMINECONF > "$EFI_DIR/EFI/limine/limine.conf"
-timeout: 5
-
-/Visnux Linux
-    protocol: linux
-    path: boot():/\$KERNEL_IMAGE
-    cmdline: root=UUID=$ROOT_UUID rw
-    module_path: boot():/\$INITRAMFS_IMAGE
-
-/Visnux Linux (fallback initramfs)
-    protocol: linux
-    path: boot():/\$KERNEL_IMAGE
-    cmdline: root=UUID=$ROOT_UUID rw
-    module_path: boot():/\$FALLBACK_IMAGE
-LIMINECONF
-
-if [ -f "$EFI_DIR/EFI/Microsoft/Boot/bootmgfw.efi" ]; then
-    cat <<'LIMINEWIN' >> "$EFI_DIR/EFI/limine/limine.conf"
-
-/Windows
-    protocol: efi
-    path: boot():/EFI/Microsoft/Boot/bootmgfw.efi
-LIMINEWIN
-fi
-
-cp -f "$EFI_DIR/EFI/limine/BOOTX64.EFI" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
-cp -f "$EFI_DIR/EFI/limine/limine.conf" "$EFI_DIR/EFI/BOOT/limine.conf" || true
-
-if [ "$UEFI_NVRAM_OK" = "true" ]; then
-    efibootmgr --create --disk "$ESP_DISK" --part "$ESP_PARTNUM" --label "Visnux (Limine)" --loader '\EFI\limine\BOOTX64.EFI' --unicode || echo "WARNING: could not create a firmware boot entry for Limine, relying on the fallback path EFI/BOOT/BOOTX64.EFI." >&2
-fi
-BLEOF
-            ;;
-        refind)
-            cat <<BLEOF
-if [ "$UEFI_NVRAM_OK" = "true" ]; then
-    refind-install
-else
-    refind-install --usedefault "$ESP_DEV"
-fi
-if [ \$? -ne 0 ]; then
-    echo "WARNING: refind-install failed, retrying with --usedefault (fallback path, no firmware boot entry)." >&2
-    refind-install --usedefault "$ESP_DEV"
-    if [ \$? -ne 0 ]; then
-        echo "FATAL: refind-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
-        exit 1
-    fi
-fi
-
-cat <<'REFINDCONF' > /boot/refind_linux.conf
-"Boot with standard options"  "root=UUID=$ROOT_UUID rw"
-"Boot to single-user mode"    "root=UUID=$ROOT_UUID rw single"
-REFINDCONF
-BLEOF
-            ;;
-        *)
-            cat <<BLEOF
+    cat <<BLEOF
 if [ "$BOOT_MODE" = "uefi" ]; then
-    pacman -S --noconfirm --overwrite="*" grub efibootmgr os-prober
+    pacman -S --needed --noconfirm --overwrite="*" grub efibootmgr os-prober
     if [ "$UEFI_NVRAM_OK" = "true" ]; then
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux
-        if [ \$? -ne 0 ]; then
-            echo "WARNING: grub-install with NVRAM registration failed, retrying with --removable (no firmware boot entry will be created)." >&2
-            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-            if [ \$? -ne 0 ]; then
-                echo "FATAL: UEFI grub-install failed even with --removable. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
+        if ! grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux; then
+            echo "WARNING: UEFI NVRAM registration failed; retrying GRUB removable install." >&2
+            grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable || {
+                echo "FATAL: UEFI GRUB installation failed." >&2
                 exit 1
-            fi
+            }
         fi
     else
-        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable
-        if [ \$? -ne 0 ]; then
-            echo "FATAL: UEFI grub-install failed. Check that $EFI_DIR is your mounted ESP (vfat filesystem, esp/boot partition flag set)." >&2
+        grub-install --target=x86_64-efi --efi-directory="$EFI_DIR" --bootloader-id=Visnux --removable || {
+            echo "FATAL: UEFI GRUB installation failed." >&2
             exit 1
-        fi
+        }
     fi
-
     mkdir -p "$EFI_DIR/EFI/BOOT"
     if [ -f "$EFI_DIR/EFI/Visnux/grubx64.efi" ]; then
-        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI" || true
+        cp -f "$EFI_DIR/EFI/Visnux/grubx64.efi" "$EFI_DIR/EFI/BOOT/BOOTX64.EFI"
     fi
 else
-    if [ -z "$GRUB_DISK" ]; then
-        echo "FATAL: could not determine the target disk for BIOS grub-install (findmnt/lsblk gave nothing usable - no /dev/sda assumption made). See log for details." >&2
+    if [ -z "$GRUB_DISK" ] || [ ! -b "$GRUB_DISK" ]; then
+        echo "FATAL: could not determine a valid target disk for BIOS/MBR GRUB installation." >&2
         exit 1
     fi
-    pacman -S --noconfirm --overwrite="*" grub os-prober
-    grub-install --recheck "$GRUB_DISK"
-    if [ \$? -ne 0 ]; then
-        echo "FATAL: BIOS grub-install to $GRUB_DISK failed." >&2
+    pacman -S --needed --noconfirm --overwrite="*" grub os-prober
+    grub-install --target=i386-pc --recheck "$GRUB_DISK" || {
+        echo "FATAL: BIOS/MBR GRUB installation to $GRUB_DISK failed." >&2
         exit 1
-    fi
+    }
 fi
 
-sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
-sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
-grub-mkconfig -o /boot/grub/grub.cfg
+mkdir -p /boot/grub
+if [ -f /etc/default/grub ]; then
+    if grep -q '^GRUB_DISTRIBUTOR=' /etc/default/grub; then
+        sed -i 's/^GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub
+    else
+        printf '%s\\n' 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
+    fi
+    if grep -q '^GRUB_DISABLE_OS_PROBER=' /etc/default/grub; then
+        sed -i 's/^GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub
+    else
+        printf '%s\\n' 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+    fi
+fi
+grub-mkconfig -o /boot/grub/grub.cfg || {
+    echo "FATAL: grub-mkconfig failed." >&2
+    exit 1
+}
 BLEOF
-            ;;
-    esac
 }
 
 resolve_bootloader_packages() {
-    case "$BOOTLOADER" in
-        limine) BL_PKGS="limine efibootmgr" ;;
-        refind) BL_PKGS="refind efibootmgr" ;;
-        *) BL_PKGS="grub efibootmgr os-prober" ;;
-    esac
+    BOOTLOADER="grub"
+    BL_PKGS="grub efibootmgr os-prober"
 }
 
 > "$LOGFILE"
@@ -608,23 +534,9 @@ while true; do
     fi
 
     if [ "$MENU" == "9" ]; then
-        CHOICE=$(dialog --title "Bootloader" --menu "Choose your bootloader:" 12 70 3 \
-            1 "GRUB (BIOS + UEFI, dual-boot via os-prober)" \
-            2 "Limine (UEFI only)" \
-            3 "rEFInd (UEFI only)" 3>&1 1>&2 2>&3 3>&-); clear
-
-        case "$CHOICE" in
-            1) BOOTLOADER="grub" ;;
-            2) BOOTLOADER="limine" ;;
-            3) BOOTLOADER="refind" ;;
-        esac
-
-        if [ -n "$CHOICE" ]; then
-            BL_NOTE=""
-            [ "$BOOTLOADER" == "limine" ] && BL_NOTE="\n\nLimine needs your EFI partition mounted at /mnt/boot."
-            [ "$BOOTLOADER" == "refind" ] && BL_NOTE="\n\nrEFInd needs a UEFI system."
-            dialog --title "Bootloader Set" --msgbox "Bootloader set to: $BOOTLOADER$BL_NOTE" 0 0; clear
-        fi
+        BOOTLOADER="grub"
+        dialog --title "Bootloader" --msgbox "Visnux uses GRUB. GRUB supports both BIOS/MBR and UEFI systems." 0 0
+        clear
     fi
 
     if [ "$MENU" == "10" ]; then
@@ -713,34 +625,6 @@ while true; do
             clear
         fi
 
-        if [ "$BOOTLOADER" != "grub" ]; then
-            if [ "$BOOT_MODE" != "uefi" ]; then
-                dialog --title "Bootloader Error" --msgbox "$BOOTLOADER only supports UEFI, but the installer is set to BIOS/Legacy.\n\nChoose GRUB in the Bootloader menu, or fix the Boot Mode." 0 0; clear
-                continue
-            fi
-            if [ -z "$(findmnt -no UUID /mnt 2>/dev/null)" ]; then
-                dialog --title "Bootloader Error" --msgbox "Could not read the UUID of the root partition mounted at /mnt, which $BOOTLOADER needs for its boot entry." 0 0; clear
-                continue
-            fi
-        fi
-
-        if [ "$BOOTLOADER" == "limine" ] && [ "$EFI_DIR" != "/boot" ]; then
-            dialog --title "Bootloader Error" --msgbox "$BOOTLOADER keeps the kernel and initramfs on the EFI partition, so it must be mounted at /mnt/boot (not /mnt/boot/efi).\n\nRemount it there, or choose GRUB or rEFInd." 0 0; clear
-            continue
-        fi
-
-        if [ "$BOOTLOADER" == "limine" ] && [ -n "$EFI_DIR" ]; then
-            ESP_SIZE_MB=$(df -Pm "/mnt${EFI_DIR}" 2>/dev/null | awk 'NR==2 {print $2}')
-            if [ -n "$ESP_SIZE_MB" ] && [ "$ESP_SIZE_MB" -lt 300 ]; then
-                dialog --title "EFI Partition Small" --yesno "Your EFI partition is only ${ESP_SIZE_MB} MB. $BOOTLOADER stores the kernel and initramfs images on it, and they need roughly 200-300 MB (more with the fallback initramfs).\n\nContinue anyway?" 0 0
-                if [ $? -ne 0 ]; then
-                    clear
-                    continue
-                fi
-                clear
-            fi
-        fi
-
         dialog --title "Warning!" --yesno "If you click confirm, Visnux Linux will install on your disk/partition at /mnt. THIS ACTION CANNOT BE REVERSED!\n\nSO do it at your own risk!!" 0 0
         
         STATUS=$?
@@ -755,10 +639,16 @@ while true; do
             fi
 
             ROOT_PART=$(findmnt -no SOURCE /mnt 2>/dev/null)
+            # findmnt may append a Btrfs subvolume suffix such as [/@]; strip it
+            # before asking lsblk to walk encrypted/LVM/device-mapper parents.
+            ROOT_PART=${ROOT_PART%%\[*}
             GRUB_DISK=""
             if [ -n "$ROOT_PART" ]; then
-                PKNAME=$(lsblk -no pkname "$ROOT_PART" 2>/dev/null)
-                [ -n "$PKNAME" ] && GRUB_DISK="/dev/$PKNAME"
+                GRUB_DISK=$(lsblk -s -nrpo NAME,TYPE "$ROOT_PART" 2>/dev/null | awk '$2 == "disk" {print $1; exit}')
+                if [ -z "$GRUB_DISK" ]; then
+                    PKNAME=$(lsblk -no pkname "$ROOT_PART" 2>/dev/null | head -n1)
+                    [ -n "$PKNAME" ] && GRUB_DISK="/dev/$PKNAME"
+                fi
             fi
             if [ "$BOOT_MODE" == "bios" ] && [ -z "$GRUB_DISK" ]; then
                 echo "WARNING: could not auto-detect the target disk from /mnt (findmnt/lsblk gave nothing usable)." >> "$LOGFILE"
@@ -795,7 +685,7 @@ while true; do
                 bootstrap_keyring archlinux-keyring /etc/pacman.conf archlinux
 
                 if [ "$INIT_OK" == "true" ]; then
-                    pacstrap -C /etc/pacman.conf -K /mnt base base-devel $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                    pacstrap -C /etc/pacman.conf -K /mnt base base-devel mkinitcpio $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS sudo --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 fi
                 
                 if [ "$INIT_OK" == "true" ]; then
@@ -904,7 +794,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -970,7 +860,7 @@ EOF
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
                 if [ "$INIT_OK" == "true" ]; then
-                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel openrc elogind-openrc $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel mkinitcpio openrc elogind-openrc $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS pipewire pipewire-pulse wireplumber artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 fi
 
                 if [ "$INIT_OK" == "true" ]; then
@@ -1126,7 +1016,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -1211,7 +1101,7 @@ EOF
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
                 if [ "$INIT_OK" == "true" ]; then
-                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel runit runit-rc elogind-runit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel mkinitcpio runit runit-rc elogind-runit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 fi
 
                 if [ "$INIT_OK" == "true" ]; then
@@ -1370,7 +1260,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -1460,7 +1350,7 @@ EOF
                 bootstrap_keyring archlinux-keyring "$ARTIX_CONF" archlinux /etc/pacman.conf
 
                 if [ "$INIT_OK" == "true" ]; then
-                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel dinit elogind-dinit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
+                    pacstrap -C "$ARTIX_CONF" /mnt base base-devel mkinitcpio dinit elogind-dinit $KERNEL_PKGS linux-firmware sof-firmware $BL_PKGS artix-keyring archlinux-keyring artix-mirrorlist sudo git --overwrite="*" 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
                 fi
 
                 if [ "$INIT_OK" == "true" ]; then
@@ -1619,7 +1509,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -1695,38 +1585,63 @@ SVCEOF
             # ELOV currently exposes a versioned image (vmlinuz-7.2.15-visnux).
             if [ "$INIT_OK" == "true" ]; then
                 echo "=== Building matching initramfs and refreshing GRUB ===" | tee -a "$LOGFILE"
-                arch-chroot /mnt /usr/bin/env ROOT_UUID="$ROOT_UUID" /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
+                arch-chroot /mnt /usr/bin/env ROOT_UUID="$ROOT_UUID" KERNEL_CHOICE="$KERNEL_CHOICE" /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
 set -euo pipefail
 
 mkdir -p /etc/mkinitcpio.d /boot
 
 # Prefer the selected package's known image, then discover a versioned image.
-if [ -f /boot/vmlinuz-visnux ]; then
-    kernel_image=/boot/vmlinuz-visnux
-elif [ -f /boot/vmlinuz-7.2.15-visnux ]; then
-    kernel_image=/boot/vmlinuz-7.2.15-visnux
-elif [ -f /boot/vmlinuz-linux ]; then
-    kernel_image=/boot/vmlinuz-linux
+if [ "$KERNEL_CHOICE" = "visnux" ]; then
+    if [ -f /boot/vmlinuz-visnux ]; then
+        kernel_image=/boot/vmlinuz-visnux
+    else
+        kernel_image=$(find /boot -maxdepth 1 -name 'vmlinuz-*-visnux' -print | sort -V | tail -n1)
+    fi
 else
-    kernel_image=$(find /boot -maxdepth 1 -type f \( -name 'vmlinuz-*' -o -name 'vmlinuz' \) -print -quit)
+    kernel_image=/boot/vmlinuz-linux
+fi
+if [ ! -s "${kernel_image:-}" ]; then
+    echo "FATAL: selected $KERNEL_CHOICE kernel image was not found in /boot." >&2
+    echo "Available kernel images:" >&2
+    find /boot -maxdepth 1 -type f -name 'vmlinuz*' -printf '  %p\n' >&2 || true
+    exit 1
 fi
 [ -n "${kernel_image:-}" ] && [ -s "$kernel_image" ] || { echo "FATAL: no usable kernel image found in /boot" >&2; exit 1; }
 
 # Resolve the exact kernel release from its matching /usr/lib/modules directory.
 # The ELOV kernel uses a versioned filename; its release must have installed modules.
 image_base=${kernel_image##*/}
+kernel_release=""
 case "$image_base" in
-    vmlinuz-visnux) kernel_release=visnux ;;
-    vmlinuz-linux) kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1) ;;
-    vmlinuz-*) kernel_release=${image_base#vmlinuz-} ;;
-    *) kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1) ;;
+    vmlinuz-visnux) [ -d /usr/lib/modules/visnux ] && kernel_release=visnux ;;
+    vmlinuz-linux)
+        kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)
+        ;;
+    vmlinuz-*)
+        image_release=${image_base#vmlinuz-}
+        [ -d "/usr/lib/modules/$image_release" ] && kernel_release=$image_release
+        if [ -z "$kernel_release" ] && [ "$KERNEL_CHOICE" = "visnux" ]; then
+            mapfile -t visnux_modules < <(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -name '*visnux*' -printf '%f\n' | sort -V)
+            if [ "${#visnux_modules[@]}" -eq 1 ]; then
+                kernel_release=${visnux_modules[0]}
+            fi
+        fi
+        ;;
 esac
-if [ ! -d "/usr/lib/modules/$kernel_release" ]; then
-    echo "FATAL: kernel image $kernel_image has no matching /usr/lib/modules/$kernel_release directory." >&2
+if [ -z "$kernel_release" ] && [ -d /usr/lib/modules ]; then
+    mapfile -t module_releases < <(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V)
+    if [ "${#module_releases[@]}" -eq 1 ]; then
+        kernel_release=${module_releases[0]}
+    fi
+fi
+if [ -z "$kernel_release" ] || [ ! -d "/usr/lib/modules/$kernel_release" ]; then
+    echo "FATAL: could not unambiguously match $kernel_image to an installed kernel module directory." >&2
     echo "Installed module releases:" >&2
     find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '  %f\n' >&2 || true
     exit 1
 fi
+command -v mkinitcpio >/dev/null 2>&1 || { echo "FATAL: mkinitcpio is not installed." >&2; exit 1; }
+[ -s /etc/mkinitcpio.conf ] || { echo "FATAL: /etc/mkinitcpio.conf is missing or empty." >&2; exit 1; }
 
 # The preset uses the kernel image path as ALL_kver, which mkinitcpio supports
 # and which guarantees the matching release is selected for image generation.

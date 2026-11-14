@@ -1083,7 +1083,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -1303,7 +1303,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -1545,7 +1545,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }
@@ -1792,7 +1792,7 @@ done
 if [ "$DE" == "2" ]; then
     echo "=== Verifying Xorg and XFCE desktop installation ===" >&2
     for desktop_pkg in xorg-server xorg-xinit xf86-input-libinput mesa xfce4-session xfce4-panel xfce4-settings xfdesktop xfwm4 thunar sddm; do
-        pacman -Q "$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: $desktop_pkg" >&2; exit 1; }
+        pacman -Q "\$desktop_pkg" >/dev/null 2>&1 || { echo "FATAL: required XFCE/Xorg package missing: \$desktop_pkg" >&2; exit 1; }
     done
     command -v startxfce4 >/dev/null 2>&1 || { echo "FATAL: startxfce4 was not installed; XFCE session cannot start." >&2; exit 1; }
     [ -f /usr/share/xsessions/xfce.desktop ] || { echo "FATAL: XFCE X11 session file is missing." >&2; exit 1; }

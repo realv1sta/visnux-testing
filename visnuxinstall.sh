@@ -30,7 +30,7 @@ append_elov_repo() {
         cat >> "$conf" <<'ELOVCONF'
 
 [ELOV]
-SigLevel = Optional
+SigLevel = Optional TrustAll
 Server = https://realv1sta.github.io/ELOV
 ELOVCONF
     fi
@@ -307,6 +307,11 @@ resolve_gpu_packages() {
     esac
     GPU_PKGS=$(echo $list | tr ' ' '\n' | sort -u | tr '\n' ' ')
     GPU_PKGS=${GPU_PKGS% }
+    if [ "$KERNEL_CHOICE" == "visnux" ]; then
+        case " $GPU_PKGS " in
+            *" nvidia-open "*) GPU_PKGS=$(echo "$GPU_PKGS" | sed 's/\bnvidia-open\b/nvidia-open-dkms dkms/') ;;
+        esac
+    fi
 }
 
 bootloader_chroot_script() {
@@ -320,15 +325,12 @@ if [ \$? -ne 0 ]; then
     exit 1
 fi
 
-KERNEL_IMAGE="$KERNEL_IMAGE"
-INITRAMFS_IMAGE="$INITRAMFS_IMAGE"
-FALLBACK_IMAGE="$FALLBACK_IMAGE"
-[ -f "/boot/\$KERNEL_IMAGE" ] || KERNEL_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -printf '%f\n' | head -n1)
-[ -f "/boot/\$INITRAMFS_IMAGE" ] || INITRAMFS_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'initramfs-*.img' ! -name '*fallback*' -printf '%f\n' | head -n1)
-[ -f "/boot/\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE=\$(find /boot -maxdepth 1 -type f -name 'initramfs-*-fallback.img' -printf '%f\n' | head -n1)
-[ -n "\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE="\$INITRAMFS_IMAGE"
-if [ -z "\$KERNEL_IMAGE" ] || [ -z "\$INITRAMFS_IMAGE" ]; then
-    echo "FATAL: could not locate the installed kernel or initramfs under /boot." >&2
+KERNEL_IMAGE="\${VISNUX_KERNEL_NAME:-$KERNEL_IMAGE}"
+INITRAMFS_IMAGE="\${VISNUX_INITRD_NAME:-$INITRAMFS_IMAGE}"
+FALLBACK_IMAGE="\${VISNUX_FALLBACK_NAME:-$FALLBACK_IMAGE}"
+[ -f "/boot/\$FALLBACK_IMAGE" ] || FALLBACK_IMAGE="\$INITRAMFS_IMAGE"
+if [ ! -f "/boot/\$KERNEL_IMAGE" ] || [ ! -f "/boot/\$INITRAMFS_IMAGE" ]; then
+    echo "FATAL: could not locate the installed kernel (\$KERNEL_IMAGE) or initramfs (\$INITRAMFS_IMAGE) under /boot." >&2
     exit 1
 fi
 
@@ -428,10 +430,189 @@ fi
 
 sed -i 's/^#*GRUB_DISTRIBUTOR=.*/GRUB_DISTRIBUTOR="Visnux"/' /etc/default/grub || echo 'GRUB_DISTRIBUTOR="Visnux"' >> /etc/default/grub
 sed -i 's/^#*GRUB_DISABLE_OS_PROBER=.*/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub || echo 'GRUB_DISABLE_OS_PROBER=false' >> /etc/default/grub
+sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="loglevel=4"/' /etc/default/grub
 grub-mkconfig -o /boot/grub/grub.cfg
+if [ -n "\${VISNUX_KERNEL_NAME:-}" ]; then
+    grep -Fq "\$VISNUX_KERNEL_NAME" /boot/grub/grub.cfg || { echo "FATAL: grub.cfg does not reference the kernel \$VISNUX_KERNEL_NAME." >&2; exit 1; }
+    grep -Fq "\$VISNUX_INITRD_NAME" /boot/grub/grub.cfg || { echo "FATAL: grub.cfg does not reference the initramfs \$VISNUX_INITRD_NAME." >&2; exit 1; }
+fi
 BLEOF
             ;;
     esac
+}
+
+kernel_finalize_chroot_script() {
+    cat <<KHEAD
+KERNEL_CHOICE="$KERNEL_CHOICE"
+KERNEL_PKGS="$KERNEL_PKGS"
+ROOT_UUID="$ROOT_UUID"
+KHEAD
+    cat <<'KBODY'
+set -o pipefail
+
+VISNUX_REPORT=/root/visnux-boot-report.txt
+: > "$VISNUX_REPORT"
+vsay() { echo "$@" | tee -a "$VISNUX_REPORT"; }
+vdie() { echo "FATAL: $*" | tee -a "$VISNUX_REPORT" >&2; exit 1; }
+
+vsay "=== Visnux boot finalization ==="
+vsay "Kernel selection: $KERNEL_CHOICE ($KERNEL_PKGS)"
+vsay "Root filesystem UUID: $ROOT_UUID"
+
+command -v file >/dev/null 2>&1 || pacman -S --needed --noconfirm file </dev/null >/dev/null 2>&1 || true
+kernel_version_of() { file -bL "$1" 2>/dev/null | sed -n 's/.*version \([^ ,]*\).*/\1/p'; }
+
+KPKG=${KERNEL_PKGS%% *}
+for kp in $KERNEL_PKGS; do
+    pacman -Q "$kp" >/dev/null 2>&1 || vdie "kernel package '$kp' is not installed."
+done
+vsay "Installed: $(pacman -Q $KERNEL_PKGS | tr '\n' ' ')"
+
+PKG_FILES=$(pacman -Ql "$KPKG" | awk '{print $2}')
+KREL=$(printf '%s\n' "$PKG_FILES" | sed -n 's#^/usr/lib/modules/\([^/][^/]*\)/.*#\1#p' | sort -u | head -n 1)
+if [ -z "$KREL" ] && [ "$KERNEL_CHOICE" == "visnux" ]; then
+    KREL=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -iname '*visnux*' -printf '%f\n' | sort -V | tail -n 1)
+fi
+[ -n "$KREL" ] || KREL=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)
+if [ -z "$KREL" ] || [ ! -d "/usr/lib/modules/$KREL" ]; then
+    vdie "no kernel modules directory found under /usr/lib/modules for $KPKG."
+fi
+vsay "Kernel release (modules directory): $KREL"
+
+if [ "$KERNEL_CHOICE" == "arch" ] && [ -f /etc/mkinitcpio.d/linux.preset ]; then
+    vsay "Arch kernel: rebuilding the initramfs from the linux preset."
+    if ! mkinitcpio -p linux </dev/null 2>&1 | tee -a "$VISNUX_REPORT"; then
+        vdie "mkinitcpio -p linux failed."
+    fi
+    KNAME=vmlinuz-linux
+    INAME=initramfs-linux.img
+    FNAME=initramfs-linux-fallback.img
+else
+    KIMG=""
+    for f in /boot/vmlinuz-* /boot/vmlinuz "/usr/lib/modules/$KREL/vmlinuz"; do
+        [ -f "$f" ] || continue
+        if [ "$(kernel_version_of "$f")" == "$KREL" ]; then
+            KIMG="$f"
+            break
+        fi
+    done
+
+    if [ -z "$KIMG" ]; then
+        for f in $(printf '%s\n' "$PKG_FILES" | grep -E '(^|/)(vmlinuz|bzImage)[^/]*$'); do
+            if [ -f "$f" ]; then
+                KIMG="$f"
+                break
+            fi
+        done
+        [ -n "$KIMG" ] || vdie "could not find a kernel image belonging to $KPKG."
+        IMGVER=$(kernel_version_of "$KIMG")
+        vsay "WARNING: kernel image $KIMG reports version '${IMGVER:-unknown}' but its modules directory is '$KREL'."
+        if [ -n "$IMGVER" ] && [ "$IMGVER" != "$KREL" ]; then
+            if [ -d "/usr/lib/modules/$IMGVER" ]; then
+                KREL="$IMGVER"
+            else
+                vdie "kernel image version '$IMGVER' has no /usr/lib/modules/$IMGVER directory. The kernel and its modules do not match, which drops you into the initramfs emergency shell on boot."
+            fi
+        fi
+    fi
+
+    case "$KIMG" in
+        /boot/vmlinuz-*) ;;
+        *)
+            KPB=$(cat "/usr/lib/modules/$KREL/pkgbase" 2>/dev/null)
+            install -Dm644 "$KIMG" "/boot/vmlinuz-${KPB:-$KREL}" || vdie "could not copy the kernel image into /boot."
+            KIMG="/boot/vmlinuz-${KPB:-$KREL}"
+            ;;
+    esac
+    KNAME=${KIMG##*/}
+    KSUF=${KNAME#vmlinuz-}
+    INAME="initramfs-${KSUF}.img"
+    FNAME="initramfs-${KSUF}-fallback.img"
+    vsay "Kernel image: /boot/$KNAME (reports version $(kernel_version_of "/boot/$KNAME"))"
+
+    depmod "$KREL" </dev/null >/dev/null 2>&1 || true
+
+    COMP=gzip
+    KCONF="/usr/lib/modules/$KREL/build/.config"
+    if [ -r "$KCONF" ]; then
+        COMP=""
+        for pair in gzip:GZIP zstd:ZSTD xz:XZ lzma:LZMA bzip2:BZIP2 lz4:LZ4 lzop:LZO; do
+            if grep -q "^CONFIG_RD_${pair#*:}=y" "$KCONF"; then
+                COMP=${pair%%:*}
+                break
+            fi
+        done
+        [ -n "$COMP" ] || vdie "the kernel config has no initramfs decompressor (CONFIG_RD_*), so it cannot unpack any initramfs."
+        grep -q '^CONFIG_BLK_DEV_INITRD=y' "$KCONF" || vdie "the kernel was built without CONFIG_BLK_DEV_INITRD, so it cannot boot an initramfs."
+        for opt in DEVTMPFS INOTIFY_USER SIGNALFD TIMERFD EPOLL FHANDLE UNIX SYSFS PROC_FS TMPFS; do
+            grep -q "^CONFIG_${opt}=[ym]" "$KCONF" || vsay "WARNING: kernel config lacks CONFIG_${opt}; udev and the initramfs may not work without it."
+        done
+    else
+        vsay "NOTE: no kernel .config found at $KCONF; using gzip initramfs compression."
+    fi
+
+    vsay "Building $INAME (compression: $COMP, generic hardware support)"
+    if ! mkinitcpio -k "$KREL" -c /etc/mkinitcpio.conf -z "$COMP" -S autodetect,kms -g "/boot/$INAME" </dev/null 2>&1 | tee -a "$VISNUX_REPORT"; then
+        vdie "mkinitcpio failed while building /boot/$INAME."
+    fi
+    vsay "Building $FNAME (compression: $COMP, with graphics modules)"
+    if ! mkinitcpio -k "$KREL" -c /etc/mkinitcpio.conf -z "$COMP" -S autodetect -g "/boot/$FNAME" </dev/null 2>&1 | tee -a "$VISNUX_REPORT"; then
+        vdie "mkinitcpio failed while building /boot/$FNAME."
+    fi
+fi
+
+[ -s "/boot/$KNAME" ] || vdie "kernel image /boot/$KNAME is missing."
+[ -s "/boot/$INAME" ] || vdie "initramfs /boot/$INAME was not created."
+[ -s "/boot/$FNAME" ] || FNAME="$INAME"
+
+INITLIST=/tmp/visnux-initrd.list
+if command -v lsinitcpio >/dev/null 2>&1; then
+    lsinitcpio "/boot/$INAME" > "$INITLIST" 2>/dev/null || vdie "the initramfs /boot/$INAME is not a valid archive."
+    grep -q "usr/lib/modules/$KREL/modules.dep" "$INITLIST" || vdie "the initramfs does not contain modules for kernel $KREL, so it would drop to an emergency shell."
+
+    RFS=$(findmnt -no FSTYPE / 2>/dev/null)
+    if [ -n "$RFS" ]; then
+        if grep -qE "/${RFS}\.ko" "$INITLIST"; then
+            vsay "Root filesystem driver '$RFS': present in the initramfs."
+        elif grep -qE "(^|/)${RFS}\.ko" "/usr/lib/modules/$KREL/modules.builtin" 2>/dev/null; then
+            vsay "Root filesystem driver '$RFS': built into the kernel."
+        else
+            vdie "kernel $KREL has no '$RFS' filesystem support (neither a module in the initramfs nor built in), so it cannot mount the root partition."
+        fi
+    fi
+
+    RSRC=$(findmnt -no SOURCE / 2>/dev/null)
+    RDEV=${RSRC#/dev/}
+    if [ -n "$RDEV" ] && [ -e "/sys/class/block/$RDEV" ]; then
+        rp=$(readlink -f "/sys/class/block/$RDEV")
+        drivers=""
+        while [ "$rp" != "/" ] && [ "$rp" != "/sys" ] && [ -n "$rp" ]; do
+            if [ -L "$rp/driver" ]; then
+                drivers="$drivers $(basename "$(readlink -f "$rp/driver")")"
+            fi
+            rp=$(dirname "$rp")
+        done
+        for drv in $drivers; do
+            mod=$drv
+            [ "$drv" == "sd" ] && mod=sd_mod
+            pat=$(printf '%s' "$mod" | sed 's/[-_]/[-_]/g')
+            if grep -qE "/${pat}\.ko" "$INITLIST" || grep -qE "(^|/)${pat}\.ko" "/usr/lib/modules/$KREL/modules.builtin" 2>/dev/null; then
+                vsay "Root disk driver '$drv': OK"
+            else
+                vsay "WARNING: root disk driver '$drv' (module '$mod') is neither in the initramfs nor built into the kernel."
+            fi
+        done
+    fi
+fi
+
+vsay "Boot files in /boot:"
+ls -lh /boot 2>&1 | tee -a "$VISNUX_REPORT"
+
+VISNUX_KERNEL_NAME="$KNAME"
+VISNUX_INITRD_NAME="$INAME"
+VISNUX_FALLBACK_NAME="$FNAME"
+vsay "Using kernel $VISNUX_KERNEL_NAME with initramfs $VISNUX_INITRD_NAME (fallback: $VISNUX_FALLBACK_NAME)"
+KBODY
 }
 
 resolve_bootloader_packages() {
@@ -882,8 +1063,6 @@ useradd -m -G wheel "$USER_"
 echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-$(bootloader_chroot_script)
-
 DE_PKGS=""
 if [ "$DE" == "1" ]; then
     DE_PKGS="plasma konsole dolphin wl-clipboard kitty fastfetch sddm networkmanager nano sudo power-profiles-daemon"
@@ -1056,8 +1235,6 @@ echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
-
-$(bootloader_chroot_script)
 
 mkdir -p /usr/local/bin /etc/xdg/autostart
 
@@ -1301,8 +1478,6 @@ echo "$USER_:$PASSWORD" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
-
-$(bootloader_chroot_script)
 
 mkdir -p /usr/local/bin /etc/xdg/autostart
 
@@ -1551,8 +1726,6 @@ sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 if compgen -G "/etc/mkinitcpio.d/*.preset" >/dev/null; then mkinitcpio -P; else echo "No mkinitcpio preset supplied by kernel package; deferring initramfs generation."; fi
 
-$(bootloader_chroot_script)
-
 mkdir -p /usr/local/bin /etc/xdg/autostart
 
 cat <<'AUDIOEOF' > /usr/local/bin/visnux-audio-start
@@ -1690,110 +1863,13 @@ SVCEOF
                 fi
             fi
 
-            # Build the initramfs against the exact kernel release shipped by the
-            # selected package. Do not assume the kernel image is named vmlinuz-visnux:
-            # ELOV currently exposes a versioned image (vmlinuz-7.2.15-visnux).
             if [ "$INIT_OK" == "true" ]; then
-                echo "=== Building matching initramfs and refreshing GRUB ===" | tee -a "$LOGFILE"
-                arch-chroot /mnt /usr/bin/env ROOT_UUID="$ROOT_UUID" /bin/bash -e 2>&1 <<'KERNELBOOTEOF' | tee -a "$LOGFILE" || INIT_OK=false
-set -euo pipefail
+                echo "=== Building initramfs and installing the bootloader ===" | tee -a "$LOGFILE"
+                arch-chroot /mnt /bin/bash 2>&1 <<BOOTFINALEOF | tee -a "$LOGFILE" || INIT_OK=false
+$(kernel_finalize_chroot_script)
 
-mkdir -p /etc/mkinitcpio.d /boot
-
-# Prefer the selected package's known image, then discover a versioned image.
-if [ -f /boot/vmlinuz-visnux ]; then
-    kernel_image=/boot/vmlinuz-visnux
-elif [ -f /boot/vmlinuz-7.2.15-visnux ]; then
-    kernel_image=/boot/vmlinuz-7.2.15-visnux
-elif [ -f /boot/vmlinuz-linux ]; then
-    kernel_image=/boot/vmlinuz-linux
-else
-    kernel_image=$(find /boot -maxdepth 1 -type f \( -name 'vmlinuz-*' -o -name 'vmlinuz' \) -print -quit)
-fi
-[ -n "${kernel_image:-}" ] && [ -s "$kernel_image" ] || { echo "FATAL: no usable kernel image found in /boot" >&2; exit 1; }
-
-# Resolve the exact kernel release from its matching /usr/lib/modules directory.
-# The ELOV kernel uses a versioned filename; its release must have installed modules.
-image_base=${kernel_image##*/}
-case "$image_base" in
-    vmlinuz-visnux) kernel_release=visnux ;;
-    vmlinuz-linux) kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1) ;;
-    vmlinuz-*) kernel_release=${image_base#vmlinuz-} ;;
-    *) kernel_release=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1) ;;
-esac
-if [ ! -d "/usr/lib/modules/$kernel_release" ]; then
-    echo "FATAL: kernel image $kernel_image has no matching /usr/lib/modules/$kernel_release directory." >&2
-    echo "Installed module releases:" >&2
-    find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '  %f\n' >&2 || true
-    exit 1
-fi
-
-# The preset uses the kernel image path as ALL_kver, which mkinitcpio supports
-# and which guarantees the matching release is selected for image generation.
-preset_name=${image_base#vmlinuz-}
-[ "$preset_name" != "$image_base" ] || preset_name="$kernel_release"
-preset_file=/etc/mkinitcpio.d/${preset_name}.preset
-cat > "$preset_file" <<PRESETEOF
-ALL_config="/etc/mkinitcpio.conf"
-ALL_kver="$kernel_image"
-PRESETS=('default' 'fallback')
-default_image="/boot/initramfs-${preset_name}.img"
-fallback_image="/boot/initramfs-${preset_name}-fallback.img"
-fallback_options="-S autodetect"
-PRESETEOF
-
-# Build explicitly instead of relying on package-provided presets or hooks.
-mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -g "/boot/initramfs-${preset_name}.img"
-mkinitcpio -k "$kernel_release" -c /etc/mkinitcpio.conf -S autodetect -g "/boot/initramfs-${preset_name}-fallback.img"
-
-for image in "/boot/initramfs-${preset_name}.img" "/boot/initramfs-${preset_name}-fallback.img"; do
-    [ -s "$image" ] || { echo "FATAL: initramfs was not created: $image" >&2; exit 1; }
-    if command -v lsinitcpio >/dev/null 2>&1; then
-        lsinitcpio "$image" >/dev/null || { echo "FATAL: initramfs archive is invalid: $image" >&2; exit 1; }
-    fi
-done
-
-# Keep a ready-to-use diagnostic GRUB entry. Kernel parameters belong on the
-# linux line (never after initrd); this avoids asking users to edit GRUB manually.
-if command -v grub-mkconfig >/dev/null 2>&1 && [ -d /boot/grub ]; then
-    # GRUB paths differ when /boot is a separate filesystem. Search that
-    # filesystem directly in that case; otherwise paths are rooted at /.
-    boot_uuid=$(findmnt -n -o UUID /boot 2>/dev/null || true)
-    [ -n "$boot_uuid" ] || boot_uuid="$ROOT_UUID"
-    if [ "$boot_uuid" != "$ROOT_UUID" ]; then
-        grub_boot_prefix="/"
-    else
-        grub_boot_prefix="/boot/"
-    fi
-    kernel_grub_path="${grub_boot_prefix}${image_base}"
-    default_initrd_name="initramfs-${preset_name}.img"
-    fallback_initrd_name="initramfs-${preset_name}-fallback.img"
-
-    # Replace our generated diagnostic menu script every install so it never
-    # retains stale filenames, and keep kernel arguments on the linux line.
-    cat > /etc/grub.d/09_visnux_diagnostics <<GRUBDIAGEOF
-#!/bin/sh
-cat <<'VISNUXGRUBENTRIES'
-menuentry 'Visnux Linux (diagnostic)' --class visnux --class gnu-linux --class gnu --class os {
-    search --no-floppy --fs-uuid --set=root $boot_uuid
-    linux $kernel_grub_path root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
-    initrd ${grub_boot_prefix}${default_initrd_name}
-}
-
-menuentry 'Visnux Linux (diagnostic, fallback initramfs)' --class visnux --class gnu-linux --class gnu --class os {
-    search --no-floppy --fs-uuid --set=root $boot_uuid
-    linux $kernel_grub_path root=UUID=$ROOT_UUID rw loglevel=7 ignore_loglevel printk.time=1
-    initrd ${grub_boot_prefix}${fallback_initrd_name}
-}
-VISNUXGRUBENTRIES
-GRUBDIAGEOF
-    chmod 755 /etc/grub.d/09_visnux_diagnostics
-    grub-mkconfig -o /boot/grub/grub.cfg
-    grep -Fq "$image_base" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the installed kernel $image_base" >&2; exit 1; }
-    grep -Fq "$default_initrd_name" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the generated initramfs $default_initrd_name" >&2; exit 1; }
-    grep -Fq "$fallback_initrd_name" /boot/grub/grub.cfg || { echo "FATAL: GRUB config does not reference the fallback initramfs $fallback_initrd_name" >&2; exit 1; }
-fi
-KERNELBOOTEOF
+$(bootloader_chroot_script)
+BOOTFINALEOF
             fi
 
             if [ "$INIT_OK" == "true" ]; then

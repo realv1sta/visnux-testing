@@ -16,7 +16,7 @@ GPU_PKGS=""
 GPU_LABEL=""
 BOOTLOADER="grub"
 KERNEL_CHOICE="visnux"
-KERNEL_PKGS="visnux-kernel visnux-kernel-headers"
+KERNEL_PKGS="visnux visnux-headers"
 KERNEL_IMAGE="vmlinuz-visnux"
 INITRAMFS_IMAGE="initramfs-visnux.img"
 FALLBACK_IMAGE="initramfs-visnux-fallback.img"
@@ -39,7 +39,7 @@ ELOVCONF
 resolve_kernel_packages() {
     case "$KERNEL_CHOICE" in
         visnux)
-            KERNEL_PKGS="visnux-kernel visnux-kernel-headers"
+            KERNEL_PKGS="visnux visnux-headers"
             KERNEL_IMAGE="vmlinuz-visnux"
             INITRAMFS_IMAGE="initramfs-visnux.img"
             FALLBACK_IMAGE="initramfs-visnux-fallback.img"
@@ -469,13 +469,56 @@ done
 vsay "Installed: $(pacman -Q $KERNEL_PKGS | tr '\n' ' ')"
 
 PKG_FILES=$(pacman -Ql "$KPKG" | awk '{print $2}')
-KREL=$(printf '%s\n' "$PKG_FILES" | sed -n 's#^/usr/lib/modules/\([^/][^/]*\)/.*#\1#p' | sort -u | head -n 1)
-if [ -z "$KREL" ] && [ "$KERNEL_CHOICE" == "visnux" ]; then
-    KREL=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -iname '*visnux*' -printf '%f\n' | sort -V | tail -n 1)
+
+# A release only counts if it carries a non-empty modules.dep: that is the file
+# mkinitcpio and depmod actually read, and it is missing from an empty
+# directory. The previous logic took the alphabetically first directory name and
+# never looked inside it, which is how an empty /usr/lib/modules/<release>/ got
+# through and produced an unbootable install.
+KREAL=$(find /usr/lib/modules -mindepth 2 -maxdepth 2 -name modules.dep -printf '%h\n' 2>/dev/null | sed 's#.*/##' | sort -u)
+if [ -z "$KREAL" ]; then
+    vdie "no directory under /usr/lib/modules contains modules.dep for $KPKG - no usable kernel is installed."
 fi
-[ -n "$KREL" ] || KREL=$(find /usr/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n 1)
-if [ -z "$KREL" ] || [ ! -d "/usr/lib/modules/$KREL" ]; then
-    vdie "no kernel modules directory found under /usr/lib/modules for $KPKG."
+
+# Prefer the releases this package owns, but only if at least one of them is
+# real: a package that owns module directories yet ships no modules.dep is
+# broken and must not be papered over with somebody else's kernel.
+KOWN=$(printf '%s\n' "$PKG_FILES" | sed -n 's#^/usr/lib/modules/\([^/][^/]*\)/.*#\1#p' | sort -u)
+KPOOL=""
+for d in $KOWN; do
+    if printf '%s\n' "$KREAL" | grep -qxF "$d"; then
+        KPOOL="$KPOOL$d
+"
+    fi
+done
+if [ -n "$KOWN" ] && [ -z "$KPOOL" ]; then
+    vdie "$KPKG is installed but its modules directory has no modules.dep - the kernel package is broken."
+fi
+[ -n "$KPOOL" ] || KPOOL="$KREAL"
+
+# Prefer the release reported by the installed kernel image, so the image and
+# the modules directory cannot disagree (a mismatch drops straight into the
+# initramfs emergency shell); otherwise take the newest by version order - never
+# alphabetical, since "7.2.15-visnux" sorts before "7.2.15".
+KREL=""
+for pass in own any; do
+    [ -n "$KREL" ] && break
+    for f in /boot/vmlinuz-* /boot/vmlinuz; do
+        [ -f "$f" ] || continue
+        if [ "$pass" = "own" ] && [ "$KERNEL_CHOICE" = "visnux" ]; then
+            case "${f##*/}" in *visnux*) ;; *) continue ;; esac
+        fi
+        v=$(kernel_version_of "$f")
+        [ -n "$v" ] || continue
+        if printf '%s\n' "$KPOOL" | grep -qxF "$v"; then
+            KREL="$v"
+            break
+        fi
+    done
+done
+[ -n "$KREL" ] || KREL=$(printf '%s\n' "$KPOOL" | sort -V | tail -n 1)
+if [ -z "$KREL" ] || [ ! -s "/usr/lib/modules/$KREL/modules.dep" ]; then
+    vdie "no usable kernel modules directory under /usr/lib/modules for $KPKG."
 fi
 vsay "Kernel release (modules directory): $KREL"
 
@@ -810,7 +853,7 @@ while true; do
 
     if [ "$MENU" == "10" ]; then
         CHOICE=$(dialog --title "Kernel Selection" --menu "Choose the kernel for your Visnux installation:" 12 72 2 \
-            visnux "VISNUX kernel (visnux-kernel + visnux-kernel-headers) [DEFAULT]" \
+            visnux "VISNUX kernel (visnux + visnux-headers) [DEFAULT]" \
             arch "Arch Linux kernel (linux + linux-headers)" 3>&1 1>&2 2>&3 3>&-); clear
         if [ -n "$CHOICE" ]; then
             KERNEL_CHOICE="$CHOICE"
@@ -963,7 +1006,7 @@ while true; do
             fix_keyrings_and_time
             append_elov_repo /etc/pacman.conf || INIT_OK=false
             # ELOV's package database must be refreshed after adding its stanza
-            # and BEFORE pacstrap tries to resolve visnux-kernel packages.
+            # and BEFORE pacstrap tries to resolve visnux packages.
             if [ "$INIT_OK" == "true" ]; then
                 pacman -Sy --noconfirm 2>&1 | tee -a "$LOGFILE" || INIT_OK=false
             fi
